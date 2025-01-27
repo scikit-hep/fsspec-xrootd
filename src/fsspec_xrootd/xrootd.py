@@ -373,9 +373,9 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
 
     async def _touch(self, path: str, truncate: bool = False, **kwargs: Any) -> None:
         if truncate or not await self._exists(path):
-            status, _ = await _async_wrap(self._myclient.truncate)(
-                path, size=0, timeout=self.timeout
-            )
+            f = client.File()
+            status, _ = f.open(path, OpenFlags.DELETE)
+            f.close()
             if not status.ok:
                 raise OSError(f"File not touched properly: {status.message}")
         else:
@@ -758,7 +758,9 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
         self.timeout = fs.timeout
         # by this point, mode will have a "b" in it
         # update "+" mode removed for now since seek() is read only
-        if "x" in mode:
+        if mode == "r+b":
+            self.mode = OpenFlags.UPDATE
+        elif "x" in mode:
             self.mode = OpenFlags.NEW
         elif "a" in mode:
             self.mode = OpenFlags.UPDATE
@@ -834,7 +836,7 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
 
         self.kwargs = kwargs
 
-        if mode not in {"ab", "rb", "wb"}:
+        if mode not in {"ab", "rb", "wb", "r+b"}:
             raise NotImplementedError("File mode not supported")
         if mode == "rb":
             if size is not None:
@@ -849,6 +851,11 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
             self.forced = False
             self.location = None
             self.offset = 0
+            self.size = self._myFile.stat()[1].size
+        if mode == "r+b":
+            self.cache = caches[cache_type](
+                self.blocksize, self._fetch_range, self.size, **cache_options
+            )
 
     def _locate_sources(self, logical_filename: str) -> list[str]:
         """Find hosts that have the desired file.
@@ -943,3 +950,85 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
         if not status.ok:
             raise OSError(f"File did not close properly: {status.message}")
         self.closed = True
+
+    def seek(self, loc, whence=0):
+        """Set current file location
+
+        Parameters
+        ----------
+        loc: int
+            byte location
+        whence: {0, 1, 2}
+            from start of file, current location or end of file, resp.
+        """
+        loc = int(loc)
+        if whence == 0:
+            nloc = loc
+        elif whence == 1:
+            nloc = self.loc + loc
+        elif whence == 2:
+            nloc = self.size + loc
+        else:
+            raise ValueError(f"invalid whence ({whence}, should be 0, 1 or 2)")
+        if nloc < 0:
+            raise ValueError("Seek before start of file")
+        self.loc = nloc
+        return self.loc
+
+    def writable(self):
+        """Whether opened for writing"""
+        return self.mode in {"wb", "ab", "xb", "r+b"} and not self.closed
+
+    def write(self, data):
+        """
+        Write data to buffer.
+
+        Buffer only sent on flush() or if buffer is greater than
+        or equal to blocksize.
+
+        Parameters
+        ----------
+        data: bytes
+            Set of bytes to be written.
+        """
+        if not self.writable():
+            raise ValueError("File not in write mode")
+        if self.closed:
+            raise ValueError("I/O operation on closed file.")
+        if self.forced:
+            raise ValueError("This file has been force-flushed, can only close")
+        status, _n = self._myFile.write(
+            data, 
+            self.loc,
+            len(data), 
+            timeout=self.timeout
+        )
+        self.loc += len(data)
+        self.size = max(self.size, self.loc)
+        if not status.ok:
+            raise OSError(f"File did not write properly: {status.message}")
+        return len(data)
+
+    def read(self, length=-1):
+        """
+        Return data from cache, or fetch pieces as necessary
+
+        Parameters
+        ----------
+        length: int (-1)
+            Number of bytes to read; if <0, all remaining bytes.
+        """
+        length = -1 if length is None else int(length)
+        if self.mode not in {"rb", "r+b"}:
+            raise ValueError("File not in read mode")
+        if length < 0:
+            length = self.size - self.loc
+        if self.closed:
+            raise ValueError("I/O operation on closed file.")
+        if length == 0:
+            # don't even bother calling fetch
+            return b""
+        out = self.cache._fetch(self.loc, self.loc + length)
+
+        self.loc += len(out)
+        return out
