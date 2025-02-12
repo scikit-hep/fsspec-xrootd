@@ -758,8 +758,6 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
         from fsspec.core import caches
 
         self.timeout = fs.timeout
-        # by this point, mode will have a "b" in it
-        # update "+" mode removed for now since seek() is read only
         if mode == "r+b":
             self.mode = OpenFlags.UPDATE
         elif "x" in mode:
