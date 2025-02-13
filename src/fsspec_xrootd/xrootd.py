@@ -1029,7 +1029,7 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
             # don't even bother calling fetch
             return b""
         # for mypy
-        out = cast(bytes, self.cache.fetch(self.loc, self.loc + length))
+        out = cast(bytes, self.cache._fetch(self.loc, self.loc + length))
 
         self.loc += len(out)
         return out
