@@ -856,6 +856,8 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
             self.cache = caches[cache_type](
                 self.blocksize, self._fetch_range, self.size, **cache_options
             )
+        if "a" in mode:
+            self.loc = self.size
 
     def _locate_sources(self, logical_filename: str) -> list[str]:
         """Find hosts that have the desired file.
