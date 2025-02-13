@@ -10,7 +10,7 @@ import weakref
 from collections import defaultdict
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Any, Callable, Coroutine, Iterable, TypeVar
+from typing import Any, Callable, Coroutine, Iterable, TypeVar, cast
 
 from fsspec.asyn import AsyncFileSystem, _run_coros_in_chunks, sync, sync_wrapper
 from fsspec.exceptions import FSTimeoutError
@@ -374,7 +374,9 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
     async def _touch(self, path: str, truncate: bool = False, **kwargs: Any) -> None:
         if truncate or not await self._exists(path):
             f = client.File()
-            status, _ = await _async_wrap(f.open)(path, OpenFlags.DELETE)
+            status, _ = await _async_wrap(f.open)(
+                path, OpenFlags.DELETE
+            )
             await _async_wrap(f.close)()
             if not status.ok:
                 raise OSError(f"File not touched properly: {status.message}")
@@ -995,7 +997,12 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
             raise ValueError("I/O operation on closed file.")
         if self.forced:
             raise ValueError("This file has been force-flushed, can only close")
-        status, _n = self._myFile.write(data, self.loc, len(data), timeout=self.timeout)
+        status, _n = self._myFile.write(
+            data, 
+            self.loc,
+            len(data), 
+            timeout=self.timeout
+        )
         self.loc += len(data)
         self.size = max(self.size, self.loc)
         if not status.ok:
@@ -1011,7 +1018,7 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
         length: int (-1)
             Number of bytes to read; if <0, all remaining bytes.
         """
-        length = -1 if length is None else int(length)
+        length = int(length)
         if self.mode not in {"rb", "r+b"}:
             raise ValueError("File not in read mode")
         if length < 0:
@@ -1021,7 +1028,8 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
         if length == 0:
             # don't even bother calling fetch
             return b""
-        out = self.cache._fetch(self.loc, self.loc + length)
+        # for mypy
+        out = cast(bytes, self.cache.fetch(self.loc, self.loc + length))
 
         self.loc += len(out)
         return out
