@@ -951,7 +951,7 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
             raise OSError(f"File did not close properly: {status.message}")
         self.closed = True
 
-    def seek(self, loc, whence=0):
+    def seek(self, loc: int, whence: int = 0) -> int:
         """Set current file location
 
         Parameters
@@ -975,11 +975,11 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
         self.loc = nloc
         return self.loc
 
-    def writable(self):
+    def writable(self) -> bool:
         """Whether opened for writing"""
         return self.mode in {"wb", "ab", "xb", "r+b"} and not self.closed
 
-    def write(self, data):
+    def write(self, data: bytes) -> int:
         """
         Write data to buffer.
 
@@ -1009,7 +1009,7 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
             raise OSError(f"File did not write properly: {status.message}")
         return len(data)
 
-    def read(self, length=-1):
+    def read(self, length: int = -1) -> bytes:
         """
         Return data from cache, or fetch pieces as necessary
 
