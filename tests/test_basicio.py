@@ -183,6 +183,25 @@ def test_write_fsspec(localserver, clear_server):
         assert f.read() == TESTDATA1
 
 
+def test_write_rpb_fsspec(localserver, clear_server):
+    """Test writing with r+b as in uproot"""
+    remoteurl, localpath = localserver
+    fs, _ = fsspec.core.url_to_fs(remoteurl)
+    filename = "test.bin"
+    fs.touch(localpath + "/" + filename)
+    with fsspec.open(remoteurl + "/" + filename, "r+b") as f:
+        f.write(b'Hello, this is a test file for r+b mode.')
+        f.flush()
+    with fsspec.open(remoteurl + "/" + filename, "r+b") as f:
+        assert f.read() == b'Hello, this is a test file for r+b mode.'
+    with fsspec.open(remoteurl + "/" + filename, "r+b") as f:
+        f.seek(len(b'Hello, this is a '))
+        f.write(b'REPLACED ')
+        f.flush()
+    with fsspec.open(remoteurl + "/" + filename, "r+b") as f:
+        assert f.read() == b'Hello, this is a REPLACED  for r+b mode.'
+
+
 @pytest.mark.parametrize("start, end", [(None, None), (None, 10), (1, None), (1, 10)])
 def test_read_bytes_fsspec(localserver, clear_server, start, end):
     remoteurl, localpath = localserver
