@@ -374,9 +374,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
     async def _touch(self, path: str, truncate: bool = False, **kwargs: Any) -> None:
         if truncate or not await self._exists(path):
             f = client.File()
-            status, _ = await _async_wrap(f.open)(
-                path, OpenFlags.DELETE
-            )
+            status, _ = await _async_wrap(f.open)(path, OpenFlags.DELETE)
             await _async_wrap(f.close)()
             if not status.ok:
                 raise OSError(f"File not touched properly: {status.message}")
@@ -999,12 +997,7 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
             raise ValueError("I/O operation on closed file.")
         if self.forced:
             raise ValueError("This file has been force-flushed, can only close")
-        status, _n = self._myFile.write(
-            data, 
-            self.loc,
-            len(data), 
-            timeout=self.timeout
-        )
+        status, _n = self._myFile.write(data, self.loc, len(data), timeout=self.timeout)
         self.loc += len(data)
         self.size = max(self.size, self.loc)
         if not status.ok:

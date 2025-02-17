@@ -190,16 +190,16 @@ def test_write_rpb_fsspec(localserver, clear_server):
     filename = "test.bin"
     fs.touch(localpath + "/" + filename)
     with fsspec.open(remoteurl + "/" + filename, "r+b") as f:
-        f.write(b'Hello, this is a test file for r+b mode.')
+        f.write(b"Hello, this is a test file for r+b mode.")
         f.flush()
     with fsspec.open(remoteurl + "/" + filename, "r+b") as f:
-        assert f.read() == b'Hello, this is a test file for r+b mode.'
+        assert f.read() == b"Hello, this is a test file for r+b mode."
     with fsspec.open(remoteurl + "/" + filename, "r+b") as f:
-        f.seek(len(b'Hello, this is a '))
-        f.write(b'REPLACED ')
+        f.seek(len(b"Hello, this is a "))
+        f.write(b"REPLACED ")
         f.flush()
     with fsspec.open(remoteurl + "/" + filename, "r+b") as f:
-        assert f.read() == b'Hello, this is a REPLACED  for r+b mode.'
+        assert f.read() == b"Hello, this is a REPLACED  for r+b mode."
 
 
 @pytest.mark.parametrize("start, end", [(None, None), (None, 10), (1, None), (1, 10)])
