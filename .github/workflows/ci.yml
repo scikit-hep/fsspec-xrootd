@@ -50,12 +50,10 @@ jobs:
         with:
           fetch-depth: 0
       - name: Set up Conda
-        uses: conda-incubator/setup-miniconda@v3.1.0
+        uses: conda-incubator/setup-miniconda@v3
         with:
           python-version: ${{ matrix.python-version }}
-          miniforge-variant: Mambaforge
-          channels: conda-forge,defaults
-          channel-priority: true
+          miniforge-version: latest
           activate-environment: fsspec
       - name: Install build environment
         run: |
