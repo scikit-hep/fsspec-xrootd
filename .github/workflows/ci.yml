@@ -74,30 +74,3 @@ jobs:
           # Install xrootd-fsspec again because it may have been overwritten by uproot
           python -m pip install .[test]
           python -m pytest -vv -k "xrootd" uproot/tests --reruns 10 --reruns-delay 30 --only-rerun "(?i)OSError|FileNotFoundError|timeout|expired|connection|socket"
-
-  dist:
-    name: Distribution build
-    runs-on: ubuntu-latest
-    needs: [pre-commit]
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Build sdist and wheel
-        run: pipx run build
-
-      - uses: actions/upload-artifact@v3
-        with:
-          path: dist
-
-      - name: Check products
-        run: pipx run twine check dist/*
-
-      - uses: pypa/gh-action-pypi-publish@v1.12.3
-        if: github.event_name == 'release' && github.event.action == 'published'
-        with:
-          user: __token__
-          # Remember to generate this and set it in "GitHub Secrets"
-          password: ${{ secrets.pypi_password }}
