@@ -212,8 +212,8 @@ def test_read_bytes_fsspec(localserver, clear_server, start, end):
     with open(localpath + "/testfile.txt", "w") as fout:
         fout.write(TESTDATA1)
 
-    fs, _ = fsspec.core.url_to_fs(remoteurl)
-    data = fs.read_bytes(localpath + "/testfile.txt", start=start, end=end)
+    fs, _, (prefix,) = fsspec.get_fs_token_paths(remoteurl)
+    data = fs.read_bytes(prefix + "/testfile.txt", start=start, end=end)
     assert data == TESTDATA1.encode("utf-8")[start:end]
 
 
