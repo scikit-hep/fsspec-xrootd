@@ -296,6 +296,16 @@ def test_touch_modified(localserver, clear_server):
     assert t1 < t2 and t2 < t3
 
 
+def test_touch_nonexistent(localserver, clear_server):
+    remoteurl, localpath = localserver
+    fs, token, path = fsspec.get_fs_token_paths(
+        remoteurl, "rt", storage_options={"listings_expiry_time": expiry_time}
+    )
+    filename = path[0] + "/non-existent-file.bin"
+    fs.touch(filename)
+    assert fs.exists(filename)
+
+
 def test_dir_cache(localserver, clear_server):
     remoteurl, localpath = localserver
     fs, token, path = fsspec.get_fs_token_paths(
