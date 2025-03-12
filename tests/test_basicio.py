@@ -39,10 +39,13 @@ def localserver(tmpdir_factory):
     srvdir = tmpdir_factory.mktemp("srv")
     tempPath = os.path.join(srvdir, "Folder")
     os.mkdir(tempPath)
+    with open(os.path.join(srvdir, "xrd.cfg"), "w") as fout:
+        fout.write("all.export /Folder\n")
+        fout.write(f"oss.localroot {srvdir}\n")
     xrdexe = shutil.which("xrootd")
     proc = subprocess.Popen([xrdexe, "-p", str(XROOTD_PORT), srvdir])
     time.sleep(2)  # give it some startup
-    yield "root://localhost/" + str(tempPath), tempPath
+    yield "root://localhost//Folder", tempPath
     proc.terminate()
     proc.wait(timeout=10)
 
