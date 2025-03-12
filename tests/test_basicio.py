@@ -189,10 +189,10 @@ def test_write_fsspec(localserver, clear_server):
 
 def test_write_rpb_fsspec(localserver, clear_server):
     """Test writing with r+b as in uproot"""
-    remoteurl, localpath = localserver
+    remoteurl, _ = localserver
     fs, _ = fsspec.core.url_to_fs(remoteurl)
     filename = "test.bin"
-    fs.touch(localpath + "/" + filename)
+    fs.touch(remoteurl + "/" + filename)
     with fsspec.open(remoteurl + "/" + filename, "r+b") as f:
         f.write(b"Hello, this is a test file for r+b mode.")
         f.flush()
