@@ -374,7 +374,8 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
     async def _touch(self, path: str, truncate: bool = False, **kwargs: Any) -> None:
         if truncate or not await self._exists(path):
             f = client.File()
-            status, _ = await _async_wrap(f.open)(path, OpenFlags.DELETE)
+            remote_path = self.unstrip_protocol(path)
+            status, _ = await _async_wrap(f.open)(remote_path, OpenFlags.DELETE)
             await _async_wrap(f.close)()
             if not status.ok:
                 raise OSError(f"File not touched properly: {status.message}")

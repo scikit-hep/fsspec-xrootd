@@ -39,10 +39,14 @@ def localserver(tmpdir_factory):
     srvdir = tmpdir_factory.mktemp("srv")
     tempPath = os.path.join(srvdir, "Folder")
     os.mkdir(tempPath)
+    cfgfile = os.path.join(srvdir, "xrd.cfg")
+    with open(cfgfile, "w") as fout:
+        fout.write("all.export /Folder\n")
+        fout.write(f"oss.localroot {srvdir}\n")
     xrdexe = shutil.which("xrootd")
-    proc = subprocess.Popen([xrdexe, "-p", str(XROOTD_PORT), srvdir])
+    proc = subprocess.Popen([xrdexe, "-p", str(XROOTD_PORT), "-c", cfgfile])
     time.sleep(2)  # give it some startup
-    yield "root://localhost/" + str(tempPath), tempPath
+    yield "root://localhost//Folder", tempPath
     proc.terminate()
     proc.wait(timeout=10)
 
@@ -185,10 +189,10 @@ def test_write_fsspec(localserver, clear_server):
 
 def test_write_rpb_fsspec(localserver, clear_server):
     """Test writing with r+b as in uproot"""
-    remoteurl, localpath = localserver
-    fs, _ = fsspec.core.url_to_fs(remoteurl)
+    remoteurl, _ = localserver
+    fs, _, (prefix,) = fsspec.get_fs_token_paths(remoteurl)
     filename = "test.bin"
-    fs.touch(localpath + "/" + filename)
+    fs.touch(prefix + "/" + filename)
     with fsspec.open(remoteurl + "/" + filename, "r+b") as f:
         f.write(b"Hello, this is a test file for r+b mode.")
         f.flush()
@@ -208,8 +212,8 @@ def test_read_bytes_fsspec(localserver, clear_server, start, end):
     with open(localpath + "/testfile.txt", "w") as fout:
         fout.write(TESTDATA1)
 
-    fs, _ = fsspec.core.url_to_fs(remoteurl)
-    data = fs.read_bytes(localpath + "/testfile.txt", start=start, end=end)
+    fs, _, (prefix,) = fsspec.get_fs_token_paths(remoteurl)
+    data = fs.read_bytes(prefix + "/testfile.txt", start=start, end=end)
     assert data == TESTDATA1.encode("utf-8")[start:end]
 
 
@@ -294,6 +298,16 @@ def test_touch_modified(localserver, clear_server):
     t3 = fs.modified(path[0] + "/testfile.txt")
     assert fs.read_block(path[0] + "/testfile.txt", 0, 4) == b""
     assert t1 < t2 and t2 < t3
+
+
+def test_touch_nonexistent(localserver, clear_server):
+    remoteurl, localpath = localserver
+    fs, token, path = fsspec.get_fs_token_paths(
+        remoteurl, "rt", storage_options={"listings_expiry_time": expiry_time}
+    )
+    filename = path[0] + "/non-existent-file.bin"
+    fs.touch(filename)
+    assert fs.exists(filename)
 
 
 def test_dir_cache(localserver, clear_server):

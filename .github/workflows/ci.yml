@@ -62,7 +62,7 @@ jobs:
         run: python -m pip install .[test]
       - name: Test package
         run: |
-          python -m pytest -vv tests --reruns 10 --reruns-delay 30 --only-rerun "(?i)OSError|FileNotFoundError|timeout|expired|connection|socket"
+          python -m pytest -vv tests --reruns 3 --reruns-delay 5 --only-rerun "(?i)OSError|FileNotFoundError|timeout|expired|connection|socket"
 
       - name: Run fsspec-xrootd tests from uproot latest release
         run: |
