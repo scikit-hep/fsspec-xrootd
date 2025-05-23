@@ -70,7 +70,7 @@ jobs:
           UPROOT_VERSION=$(pip show uproot | grep Version | awk '{print $2}')
           git clone https://github.com/scikit-hep/uproot5.git uproot
           git -C uproot checkout tags/v${UPROOT_VERSION}
-          python -m pip install ./uproot[test]
+          (cd uproot && python -m pip install . --group test)
           # Install xrootd-fsspec again because it may have been overwritten by uproot
           python -m pip install .[test]
           python -m pytest -vv -k "xrootd" uproot/tests --reruns 10 --reruns-delay 30 --only-rerun "(?i)OSError|FileNotFoundError|timeout|expired|connection|socket"
