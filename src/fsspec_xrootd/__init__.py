@@ -2,7 +2,7 @@
 
 An xrootd implementation for fsspec.
 
-BSD 3-Clause License; see https://github.com/CoffeaTeam/fsspec-xrootd/blob/main/LICENSE
+BSD 3-Clause License; see https://github.com/scikit-hep/fsspec-xrootd/blob/main/LICENSE
 """
 
 from __future__ import annotations

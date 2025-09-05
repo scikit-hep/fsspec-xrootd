@@ -866,7 +866,7 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
         more hosts of the given file if self.fs is a redirector. Implementation of a
         solution from the Pepper project in this issue:
 
-        (https://github.com/CoffeaTeam/fsspec-xrootd/issues/36).
+        (https://github.com/scikit-hep/fsspec-xrootd/issues/36).
 
         If valid_sources is a non-empty list in fs.storage_options, will only return domain names
         that are also in valid_sources
