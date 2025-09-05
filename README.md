@@ -28,7 +28,6 @@ Please refer to [RTD](https://scikit-hep.org/fsspec-xrootd/)
 [![PyPI platforms][pypi-platforms]][pypi-link]
 
 [![GitHub Discussion][github-discussions-badge]][github-discussions-link]
-[![Gitter][gitter-badge]][gitter-link]
 
 <!-- prettier-ignore-start -->
 [actions-badge]:            https://github.com/scikit-hep/fsspec-xrootd/workflows/CI/badge.svg
