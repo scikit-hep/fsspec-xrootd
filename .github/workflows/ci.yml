@@ -75,7 +75,6 @@ jobs:
           python -m pip install .[test]
           python -m pytest -vv -k "xrootd" uproot/tests --reruns 10 --reruns-delay 30 --only-rerun "(?i)OSError|FileNotFoundError|timeout|expired|connection|socket"
 
-
   pass:
     needs: [checks]
     runs-on: ubuntu-latest
