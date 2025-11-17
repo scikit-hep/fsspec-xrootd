@@ -392,7 +392,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
     touch = sync_wrapper(_touch)
 
     async def _modified(self, path: str) -> Any:
-        status, statInfo = await _async_wrap(self._myclient.stat)(path, self.timeout)  # type: ignore[var-annotated]
+        status, statInfo = await _async_wrap(self._myclient.stat)(path, self.timeout)
         return statInfo.modtime
 
     modified = sync_wrapper(_modified)
@@ -449,13 +449,13 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         if path in self.dircache and not kwargs.get("force_update", False):
             if detail:
                 listing = self._ls_from_cache(path)
-                return listing
+                return cast(list[Any], listing)
             else:
                 return [
                     os.path.basename(item["name"]) for item in self._ls_from_cache(path)
                 ]
         else:
-            status, deets = await _async_wrap(self._myclient.dirlist)(  # type: ignore[var-annotated]
+            status, deets = await _async_wrap(self._myclient.dirlist)(
                 path, DirListFlags.STAT, self.timeout
             )
             if not status.ok:
@@ -504,7 +504,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         if start is not None and end is not None:
             n_bytes = end - start
 
-        status, data = await _async_wrap(_myFile.read)(  # type: ignore[var-annotated]
+        status, data = await _async_wrap(_myFile.read)(
             start or 0,
             n_bytes or 0,
             self.timeout,
@@ -526,7 +526,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
             start: int = 0
             while True:
                 # Read a chunk of content from the remote file
-                status, chunk = await _async_wrap(remote_file.read)(  # type: ignore[var-annotated]
+                status, chunk = await _async_wrap(remote_file.read)(
                     start, chunk_size, self.timeout
                 )
                 start += chunk_size
@@ -562,7 +562,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         data_server = f"{data_server.protocol}://{data_server.hostid}/"
         if data_server not in cls._dataserver_info_cache:
             fs = client.FileSystem(data_server)
-            status, result = await _async_wrap(fs.query)(  # type: ignore[var-annotated]
+            status, result = await _async_wrap(fs.query)(
                 QueryCode.CONFIG, "readv_iov_max readv_ior_max"
             )
             if not status.ok:
@@ -609,7 +609,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         max_num_chunks, max_chunk_size = await self._get_max_chunk_info(_myFile)
         vectors = _chunks_to_vectors(chunks, max_num_chunks, max_chunk_size)
 
-        coros = [_async_wrap(_myFile.vector_read)(v, self.timeout) for v in vectors]  # type: ignore[var-annotated]
+        coros = [_async_wrap(_myFile.vector_read)(v, self.timeout) for v in vectors]
 
         results = await _run_coros_in_chunks(coros, batch_size=batch_size, nofiles=True)
         result_bufs = []
