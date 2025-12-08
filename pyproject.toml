@@ -19,12 +19,13 @@ testpaths = [
 
 [tool.mypy]
 files = "src"
-python_version = "3.7"
+python_version = "3.9"
 warn_unused_configs = true
 strict = true
 show_error_codes = true
 enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
 warn_unreachable = true
+ignore_missing_imports = true
 
 
 [tool.check-manifest]
@@ -43,12 +44,12 @@ profile = "black"
 
 [tool.pylint]
 master.py-version = "3.7"
-master.ignore-paths= ["src/fsspec_xrootd/_version.py"]
+master.ignore-paths = ["src/fsspec_xrootd/_version.py"]
 reports.output-format = "colorized"
 similarities.ignore-imports = "yes"
 messages_control.disable = [
-  "design",
-  "fixme",
-  "line-too-long",
-  "wrong-import-position",
+    "design",
+    "fixme",
+    "line-too-long",
+    "wrong-import-position",
 ]

@@ -2,7 +2,7 @@
 # Copyright (c) 2022, Scott Demarest
 #
 # Distributed under the 3-clause BSD license, see accompanying file LICENSE
-# or https://github.com/CoffeaTeam/fsspec-xrootd for details.
+# or https://github.com/scikit-hep/fsspec-xrootd for details.
 
 from __future__ import annotations
 

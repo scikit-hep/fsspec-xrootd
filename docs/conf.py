@@ -51,7 +51,7 @@ html_baseurl = "https://fsspec_xrootd.readthedocs.io/en/latest/"
 
 html_theme_options = {
     "home_page_in_toc": True,
-    "repository_url": "https://github.com/CoffeaTeam/fsspec-xrootd",
+    "repository_url": "https://github.com/scikit-hep/fsspec-xrootd",
     "use_repository_button": True,
     "use_issues_button": True,
     "use_edit_page_button": True,

@@ -1,8 +1,13 @@
 """Test basic IO against a xrootd server fixture"""
+
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
+import shutil
+import socket
+import subprocess
 import time
 
 import fsspec
@@ -15,6 +20,7 @@ from fsspec_xrootd.xrootd import (
     _vectors_to_chunks,
 )
 
+XROOTD_PORT = 1094
 TESTDATA1 = "apple\nbanana\norange\ngrape"
 TESTDATA2 = "red\ngreen\nyellow\nblue"
 sleep_time = 0.2
@@ -23,10 +29,53 @@ expiry_time = 0.1
 macos = sys.platform == "darwin"
 
 
+def require_port_availability(port: int) -> bool:
+    """Raise an exception if the given port is already in use."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        if s.connect_ex(("localhost", port)) == 0:
+            raise RuntimeError(f"This test requires port {port} to be available")
+
+
+@pytest.fixture(scope="module")
+def localserver(tmpdir_factory):
+    require_port_availability(XROOTD_PORT)
+
+    srvdir = tmpdir_factory.mktemp("srv")
+    tempPath = os.path.join(srvdir, "Folder")
+    os.mkdir(tempPath)
+    cfgfile = os.path.join(srvdir, "xrd.cfg")
+    with open(cfgfile, "w") as fout:
+        fout.write("all.export /Folder\n")
+        fout.write(f"oss.localroot {srvdir}\n")
+    xrdexe = shutil.which("xrootd")
+    proc = subprocess.Popen([xrdexe, "-p", str(XROOTD_PORT), "-c", cfgfile])
+    time.sleep(2)  # give it some startup
+    yield "root://localhost//Folder", tempPath
+    proc.terminate()
+    proc.wait(timeout=10)
+
+
 def test_ping(server, clear_server):
     url, path = server
 
-    fs = XRootD.client.FileSystem(url)
+
+@pytest.fixture()
+def clear_server(localserver):
+    remoteurl, localpath = localserver
+    fs, _, _ = fsspec.get_fs_token_paths(remoteurl)
+    # The open file handles on client side imply an open file handle on the server,
+    # so removing the directory doesn't actually work until the client closes its handles!
+    fs.invalidate_cache()
+    shutil.rmtree(localpath)
+    os.mkdir(localpath)
+    yield
+
+
+def test_ping(localserver, clear_server):
+    remoteurl, localpath = localserver
+    from XRootD import client
+
+    fs = client.FileSystem(remoteurl)
     status, _n = fs.ping()
     if not status.ok:
         raise OSError(f"Server did not run properly: {status.message}")
@@ -73,7 +122,16 @@ def test_path_parsing():
             "root://serv.er//dir/",
         ]
     )
-    assert paths == ["/blah", "/more", "dir", "/dir"]
+    assert paths == [
+        "/blah",
+        "/more",
+        "dir",
+        "/dir",
+    ]
+    # get_fs_token_paths will expand glob patterns if '*', '?', or '[' are present
+    # so we need to test parameter parsing using a different method
+    fs, path = fsspec.url_to_fs("root://server.com//blah?param1=1&param2=2")
+    assert path == "/blah?param1=1&param2=2"
 
 
 def test_pickle(server, clear_server):
@@ -135,10 +193,45 @@ def test_write_fsspec(server, clear_server):
         assert f.read() == TESTDATA1
 
 
+
 @pytest.mark.skipif(macos, reason="Not working on macos")
 def test_append_fsspec(server, clear_server):
     url, path = server
     with open(path + "/testfile.txt", "w") as fout:
+
+def test_write_rpb_fsspec(localserver, clear_server):
+    """Test writing with r+b as in uproot"""
+    remoteurl, _ = localserver
+    fs, _, (prefix,) = fsspec.get_fs_token_paths(remoteurl)
+    filename = "test.bin"
+    fs.touch(prefix + "/" + filename)
+    with fsspec.open(remoteurl + "/" + filename, "r+b") as f:
+        f.write(b"Hello, this is a test file for r+b mode.")
+        f.flush()
+    with fsspec.open(remoteurl + "/" + filename, "r+b") as f:
+        assert f.read() == b"Hello, this is a test file for r+b mode."
+    with fsspec.open(remoteurl + "/" + filename, "r+b") as f:
+        f.seek(len(b"Hello, this is a "))
+        f.write(b"REPLACED ")
+        f.flush()
+    with fsspec.open(remoteurl + "/" + filename, "r+b") as f:
+        assert f.read() == b"Hello, this is a REPLACED  for r+b mode."
+
+
+@pytest.mark.parametrize("start, end", [(None, None), (None, 10), (1, None), (1, 10)])
+def test_read_bytes_fsspec(localserver, clear_server, start, end):
+    remoteurl, localpath = localserver
+    with open(localpath + "/testfile.txt", "w") as fout:
+        fout.write(TESTDATA1)
+
+    fs, _, (prefix,) = fsspec.get_fs_token_paths(remoteurl)
+    data = fs.read_bytes(prefix + "/testfile.txt", start=start, end=end)
+    assert data == TESTDATA1.encode("utf-8")[start:end]
+
+
+def test_append_fsspec(localserver, clear_server):
+    remoteurl, localpath = localserver
+    with open(localpath + "/testfile.txt", "w") as fout:
         fout.write(TESTDATA1)
     with fsspec.open(url + "/testfile.txt", "at") as f:
         f.write(TESTDATA2)
@@ -221,6 +314,19 @@ def test_touch_modified(server, clear_server):
 
 def test_dir_cache(server, clear_server):
     url, path = server
+
+def test_touch_nonexistent(localserver, clear_server):
+    remoteurl, localpath = localserver
+    fs, token, path = fsspec.get_fs_token_paths(
+        remoteurl, "rt", storage_options={"listings_expiry_time": expiry_time}
+    )
+    filename = path[0] + "/non-existent-file.bin"
+    fs.touch(filename)
+    assert fs.exists(filename)
+
+
+def test_dir_cache(localserver, clear_server):
+    remoteurl, localpath = localserver
     fs, token, path = fsspec.get_fs_token_paths(
         url, "rt", storage_options={"listings_expiry_time": expiry_time}
     )
@@ -373,3 +479,84 @@ def test_vectors_to_chunks(server, clear_server):
         b"0" * 20,
         b"0" * 10,
     ]
+
+
+def test_glob_full_names(localserver, clear_server):
+    remoteurl, localpath = localserver
+    os.makedirs(localpath + "/WalkFolder")
+    with open(localpath + "/WalkFolder/testfile1.txt", "w") as fout:
+        fout.write(TESTDATA1)
+    with open(localpath + "/WalkFolder/testfile2.txt", "w") as fout:
+        fout.write(TESTDATA2)
+    time.sleep(sleep_time)
+
+    full_names = [
+        f.full_name for f in fsspec.open_files(remoteurl + "/WalkFolder/*.txt")
+    ]
+
+    for name in full_names:
+        with fsspec.open(name) as f:
+            assert f.read() in [bytes(data, "utf-8") for data in [TESTDATA1, TESTDATA2]]
+
+
+@pytest.mark.parametrize("protocol_prefix", ["", "simplecache::"])
+def test_cache(localserver, clear_server, protocol_prefix):
+    data = TESTDATA1 * int(1e7 / len(TESTDATA1))  # bigger than the chunk size
+    remoteurl, localpath = localserver
+    with open(localpath + "/testfile.txt", "w") as fout:
+        fout.write(data)
+
+    with fsspec.open(protocol_prefix + remoteurl + "/testfile.txt", "rb") as f:
+        contents = f.read()
+        assert contents == data.encode("utf-8")
+
+
+def test_cache_directory(localserver, clear_server, tmp_path):
+    remoteurl, localpath = localserver
+    with open(localpath + "/testfile.txt", "w") as fout:
+        fout.write(TESTDATA1)
+
+    cache_directory = tmp_path / "cache"
+    with fsspec.open(
+        "simplecache::" + remoteurl + "/testfile.txt",
+        "rb",
+        simplecache={"cache_storage": str(cache_directory)},
+    ) as f:
+        contents = f.read()
+        assert contents == TESTDATA1.encode("utf-8")
+
+    assert len(os.listdir(cache_directory)) == 1
+    with open(cache_directory / os.listdir(cache_directory)[0], "rb") as f:
+        contents = f.read()
+        assert contents == TESTDATA1.encode("utf-8")
+
+
+def test_close_while_reading(localserver, clear_server):
+    remoteurl, localpath = localserver
+    data = TESTDATA1 * int(1e8 / len(TESTDATA1))
+    with open(localpath + "/testfile.txt", "w") as fout:
+        fout.write(data)
+
+    fs, _, (path,) = fsspec.get_fs_token_paths(remoteurl + "/testfile.txt")
+
+    async def reader():
+        tic = time.monotonic()
+        await fs._cat_file(path, start=0, end=None)
+        toc = time.monotonic()
+        return tic, toc
+
+    async def closer():
+        await asyncio.sleep(0.001)
+        tic = time.monotonic()
+        await fs._readonly_filehandle_cache._close(path, 1)
+        toc = time.monotonic()
+        return tic, toc
+
+    async def run():
+        (read_start, read_stop), (close_start, close_stop) = await asyncio.gather(
+            reader(), closer()
+        )
+        assert read_start < close_start < read_stop
+        assert read_start < close_stop < read_stop
+
+    asyncio.run(run())

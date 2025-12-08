@@ -2,81 +2,73 @@ from __future__ import annotations
 
 import asyncio
 import io
+import logging
 import os.path
+import time
 import warnings
+import weakref
 from collections import defaultdict
+from dataclasses import dataclass
 from enum import IntEnum
-from functools import partial
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Coroutine, Iterable, TypeVar, cast
 
-from fsspec.asyn import (  # type: ignore[import-not-found]
-    AsyncFileSystem,
-    _run_coros_in_chunks,
-    sync_wrapper,
-)
-from fsspec.spec import AbstractBufferedFile  # type: ignore[import-not-found]
-from XRootD import client  # type: ignore[import-not-found]
-from XRootD.client.flags import (  # type: ignore[import-not-found]
+from fsspec.asyn import AsyncFileSystem, _run_coros_in_chunks, sync, sync_wrapper
+from fsspec.exceptions import FSTimeoutError
+from fsspec.spec import AbstractBufferedFile
+from XRootD import client
+from XRootD.client.flags import (
     DirListFlags,
     MkDirFlags,
     OpenFlags,
     QueryCode,
     StatInfoFlags,
 )
-from XRootD.client.responses import (  # type: ignore[import-not-found]
-    HostList,
-    XRootDStatus,
-)
+from XRootD.client.responses import HostList, XRootDStatus
 
 
 class ErrorCodes(IntEnum):
     INVALID_PATH = 400
 
 
-def _handle(
-    future: asyncio.Future[tuple[XRootDStatus, Any]],
-    status: XRootDStatus,
-    content: Any,
-    servers: HostList,
-) -> None:
-    """Sets result of _async_wrap() future.
+T = TypeVar("T")
+# TODO: Protocol typing when kwargs is supported
+
+
+def _async_wrap(
+    func: Callable[..., XRootDStatus | tuple[XRootDStatus, T]],
+) -> Callable[..., Coroutine[Any, Any, tuple[XRootDStatus, T]]]:
+    """Wraps pyxrootd functions to run asynchronously. Returns an async callable
 
     Parameters
     ----------
-    future: asyncio future, created in _async_wrap()
-    status: XRootDStatus, pyxrootd response object
-    content: any, whatever was returned from pyxrootd function
-    servers: Hostlist, iterable list of host info (currently unused)
+    func: XRootD function that implements, needs to have a callback option
 
     Returns
     -------
-    Sets the future result.
+    A function with the same signature as func, but with an implicit `callback` argument
     """
-    if future.cancelled():
-        return
-    try:
-        future.get_loop().call_soon_threadsafe(future.set_result, (status, content))
-    except Exception as exc:
-        future.get_loop().call_soon_threadsafe(future.set_exception, exc)
+    future: asyncio.Future[tuple[XRootDStatus, T]] = (
+        asyncio.get_running_loop().create_future()
+    )
 
+    def callback(status: XRootDStatus, content: T, servers: HostList) -> None:
+        if future.cancelled():
+            return
+        loop = future.get_loop()
+        try:
+            loop.call_soon_threadsafe(future.set_result, (status, content))
+        except Exception as exc:
+            loop.call_soon_threadsafe(future.set_exception, exc)
 
-async def _async_wrap(func: Callable[..., Any], *args: Any) -> Any:
-    """Wraps pyxrootd functions to run asynchronously. Returns future to be awiated.
+    async def wrapped(*args: Any, **kwargs: Any) -> tuple[XRootDStatus, T]:
+        submit_status: XRootDStatus = func(*args, **kwargs, callback=callback)
+        if not submit_status.ok:
+            raise OSError(
+                f"Failed to submit {func!r} request: {submit_status.message.strip()}"
+            )
+        return await future
 
-    Parameters
-    ----------
-    func: pyxrootd function, needs to have a callback option
-    args: non-keyworded arguments for pyxrootd function
-
-    Returns
-    -------
-    An asyncio future. Result is set when _handle() is called back.
-    """
-    future = asyncio.get_running_loop().create_future()
-    status = func(*args, callback=partial(_handle, future))
-    if not status.ok:
-        raise OSError(status.message.strip())
-    return await future
+    return wrapped
 
 
 def _chunks_to_vectors(
@@ -144,11 +136,97 @@ def _vectors_to_chunks(
     return deets
 
 
+@dataclass
+class _CacheItem:
+    accessed: float
+    handle: client.File
+
+
+class ReadonlyFileHandleCache:
+    def __init__(self, loop: Any, max_items: int | None, ttl: int):
+        self.loop = loop
+        self._max_items = max_items
+        self._ttl = int(ttl)
+        self._cache: dict[str, _CacheItem] = {}
+        sync(loop, self._start_pruner)
+        weakref.finalize(self, self._close_all, loop, self._cache)
+
+    @staticmethod
+    def _close_all(loop: Any, cache: dict[str, _CacheItem]) -> None:
+        if loop is not None and loop.is_running():
+
+            async def closure() -> None:
+                await asyncio.gather(
+                    *(_async_wrap(item.handle.close)() for item in cache.values())
+                )
+
+            try:
+                sync(loop, closure, timeout=0.5)
+            except (TimeoutError, FSTimeoutError, NotImplementedError):
+                pass
+        else:
+            # fire and forget
+            for item in cache.values():
+                item.handle.close(callback=lambda *args: None)
+        cache.clear()
+
+    def close_all(self) -> None:
+        self._close_all(self.loop, self._cache)
+
+    async def _close(self, url: str, timeout: int) -> None:
+        item = self._cache.pop(url, None)
+        if item:
+            status, _ = await _async_wrap(item.handle.close)(timeout=timeout)
+            if not status.ok:
+                raise OSError(f"Failed to close file: {status.message}")
+
+    close = sync_wrapper(_close)
+
+    async def _start_pruner(self) -> None:
+        self._prune_task = asyncio.create_task(self._pruner())
+
+    async def _pruner(self) -> None:
+        while True:
+            await self._prune_cache(self._ttl // 2)
+            await asyncio.sleep(self._ttl)
+
+    async def _prune_cache(self, timeout: int) -> None:
+        now = time.monotonic()
+        oldest_keys = sorted((item.accessed, key) for key, item in self._cache.items())
+        to_close = []
+        if self._max_items:
+            to_close += oldest_keys[: -self._max_items]
+            oldest_keys = oldest_keys[-self._max_items :]
+        for last_access, key in oldest_keys:
+            if now - last_access > self._ttl:
+                to_close.append((last_access, key))
+        await asyncio.gather(*(self._close(key, timeout) for _, key in to_close))
+
+    async def _open(self, url: str, timeout: int) -> Any:  # client.File
+        if url in self._cache:
+            item = self._cache[url]
+            item.accessed = time.monotonic()
+            return item.handle
+        handle = client.File()
+        status, _ = await _async_wrap(handle.open)(
+            url,
+            OpenFlags.READ,
+            timeout=timeout,
+        )
+        if not status.ok:
+            raise OSError(f"Failed to open file: {status.message}")
+        self._cache[url] = _CacheItem(accessed=time.monotonic(), handle=handle)
+        await self._prune_cache(timeout)
+        return handle
+
+
 class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
     protocol = "root"
     root_marker = "/"
     default_timeout = 60
     async_impl = True
+    default_max_num_chunks = 1024
+    default_max_chunk_size = 2097136
 
     _dataserver_info_cache: dict[str, Any] = defaultdict(dict)
 
@@ -156,7 +234,9 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         self,
         hostid: str,
         asynchronous: bool = False,
-        loop: Any = None,
+        loop: asyncio.AbstractEventLoop | None = None,
+        locate_all_sources: bool = True,
+        valid_sources: list[str] | None = None,
         **storage_options: Any,
     ) -> None:
         """
@@ -171,23 +251,46 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
             If true, synchronous methods will not be available in this instance
         loop:
             Bring your own loop (for sync methods)
+        locate_all_sources = True: bool
+            Only active for reading (does nothing for writing). Defaults to True.
+            Finds all locations at which the file is hosted, and chooses from those. Does
+            not let the redirector pick the first to respond.
+        valid_sources = None: list
+            If given and locate_all_sources is True, fsspec will only reject any file host
+            not in this list. Entries should be of the form ie: `cmsxrootd-site1.fnal.gov`
+            (no port number)
         """
         super().__init__(self, asynchronous=asynchronous, loop=loop, **storage_options)
         self.timeout = storage_options.get("timeout", XRootDFileSystem.default_timeout)
+        self.hostid = hostid
+        self.locate_all_sources = locate_all_sources
+        if valid_sources:
+            self.valid_sources = valid_sources
+        else:
+            self.valid_sources = []
         self._myclient = client.FileSystem("root://" + hostid)
         if not self._myclient.url.is_valid():
             raise ValueError(f"Invalid hostid: {hostid!r}")
         storage_options.setdefault("listing_expiry_time", 0)
         self.storage_options = storage_options
+        self._readonly_filehandle_cache = ReadonlyFileHandleCache(
+            self.loop,
+            max_items=storage_options.get("filehandle_cache_size", 256),
+            ttl=storage_options.get("filehandle_cache_ttl", 30),
+        )
 
     def invalidate_cache(self, path: str | None = None) -> None:
         if path is None:
             self.dircache.clear()
+            self._readonly_filehandle_cache.close_all()
         else:
             try:
                 del self.dircache[path]
             except KeyError:
                 pass
+            self._readonly_filehandle_cache.close(
+                self.unstrip_protocol(path), self.timeout
+            )
 
     @staticmethod
     def _get_kwargs_from_urls(u: str) -> dict[Any, Any]:
@@ -199,7 +302,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
     def _strip_protocol(cls, path: str | list[str]) -> Any:
         if isinstance(path, str):
             if path.startswith(cls.protocol):
-                return client.URL(path).path.rstrip("/") or cls.root_marker
+                return client.URL(path).path_with_params.rstrip("/") or cls.root_marker
             # assume already stripped
             return path.rstrip("/") or cls.root_marker
         elif isinstance(path, list):
@@ -207,15 +310,23 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         else:
             raise ValueError("Strip protocol not given string or list")
 
+    def unstrip_protocol(self, name: str) -> str:
+        prefix = f"{self.protocol}://{self.hostid}/"
+        if name.startswith(prefix):
+            return name
+        return prefix + name
+
     async def _mkdir(
         self, path: str, create_parents: bool = True, **kwargs: Any
     ) -> None:
         if create_parents:
-            status, n = await _async_wrap(
-                self._myclient.mkdir, path, MkDirFlags.MAKEPATH, self.timeout
+            status, _ = await _async_wrap(self._myclient.mkdir)(
+                path, flags=MkDirFlags.MAKEPATH, timeout=self.timeout
             )
         else:
-            status, n = await _async_wrap(self._myclient.mkdir, path, self.timeout)
+            status, _ = await _async_wrap(self._myclient.mkdir)(
+                path, timeout=self.timeout
+            )
         if not status.ok:
             raise OSError(f"Directory not made properly: {status.message}")
 
@@ -225,8 +336,8 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
                 raise OSError(
                     "Location already exists and exist_ok arg was set to false"
                 )
-        status, n = await _async_wrap(
-            self._myclient.mkdir, path, MkDirFlags.MAKEPATH, self.timeout
+        status, _ = await _async_wrap(self._myclient.mkdir)(
+            path, MkDirFlags.MAKEPATH, timeout=self.timeout
         )
         if not status.ok and not (status.code == ErrorCodes.INVALID_PATH and exist_ok):
             raise OSError(f"Directory not made properly: {status.message}")
@@ -249,31 +360,31 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         )
 
     async def _rmdir(self, path: str) -> None:
-        status, n = await _async_wrap(self._myclient.rmdir, path, self.timeout)
+        status, _ = await _async_wrap(self._myclient.rmdir)(path, self.timeout)
         if not status.ok:
             raise OSError(f"Directory not removed properly: {status.message}")
 
     rmdir = sync_wrapper(_rmdir)
 
-    async def _rm_file(self, path: str) -> None:
-        status, n = await _async_wrap(self._myclient.rm, path, self.timeout)
+    async def _rm_file(self, path: str, **kwargs: Any) -> None:
+        status, _ = await _async_wrap(self._myclient.rm)(path, self.timeout)
         if not status.ok:
             raise OSError(f"File not removed properly: {status.message}")
 
     async def _touch(self, path: str, truncate: bool = False, **kwargs: Any) -> None:
         if truncate or not await self._exists(path):
-            status, _ = await _async_wrap(
-                self._myclient.truncate, path, 0, self.timeout
-            )
+            f = client.File()
+            remote_path = self.unstrip_protocol(path)
+            status, _ = await _async_wrap(f.open)(remote_path, OpenFlags.DELETE)
+            await _async_wrap(f.close)()
             if not status.ok:
                 raise OSError(f"File not touched properly: {status.message}")
         else:
             len = await self._info(path)
-            status, _ = await _async_wrap(
-                self._myclient.truncate,
+            status, _ = await _async_wrap(self._myclient.truncate)(
                 path,
-                len.get("size"),
-                self.timeout,
+                size=len.get("size"),
+                timeout=self.timeout,
             )
             if not status.ok:
                 raise OSError(f"File not touched properly: {status.message}")
@@ -281,7 +392,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
     touch = sync_wrapper(_touch)
 
     async def _modified(self, path: str) -> Any:
-        status, statInfo = await _async_wrap(self._myclient.stat, path, self.timeout)
+        status, statInfo = await _async_wrap(self._myclient.stat)(path, self.timeout)
         return statInfo.modtime
 
     modified = sync_wrapper(_modified)
@@ -290,7 +401,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         if path in self.dircache:
             return True
         else:
-            status, _ = await _async_wrap(self._myclient.stat, path, self.timeout)
+            status, _ = await _async_wrap(self._myclient.stat)(path, self.timeout)
             if status.code == ErrorCodes.INVALID_PATH:
                 return False
             elif not status.ok:
@@ -310,7 +421,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
                     }
             raise OSError("_ls_from_cache() failed to function")
         else:
-            status, deet = await _async_wrap(self._myclient.stat, path, self.timeout)
+            status, deet = await _async_wrap(self._myclient.stat)(path, self.timeout)
             if not status.ok:
                 raise OSError(f"File stat request failed: {status.message}")
             if deet.flags & StatInfoFlags.IS_DIR:
@@ -338,14 +449,14 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         if path in self.dircache and not kwargs.get("force_update", False):
             if detail:
                 listing = self._ls_from_cache(path)
-                return listing
+                return cast(list[Any], listing)
             else:
                 return [
                     os.path.basename(item["name"]) for item in self._ls_from_cache(path)
                 ]
         else:
-            status, deets = await _async_wrap(
-                self._myclient.dirlist, path, DirListFlags.STAT, self.timeout
+            status, deets = await _async_wrap(self._myclient.dirlist)(
+                path, DirListFlags.STAT, self.timeout
             )
             if not status.ok:
                 raise OSError(
@@ -382,33 +493,56 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
             else:
                 return [os.path.basename(item["name"].rstrip("/")) for item in listing]
 
-    async def _cat_file(self, path: str, start: int, end: int, **kwargs: Any) -> Any:
-        _myFile = client.File()
-        try:
-            status, _n = await _async_wrap(
-                _myFile.open,
-                self.protocol + "://" + self.storage_options["hostid"] + "/" + path,
-                OpenFlags.READ,
-                self.timeout,
-            )
-            if not status.ok:
-                raise OSError(f"File failed to read: {status.message}")
-            status, data = await _async_wrap(
-                _myFile.read,
-                start,
-                end - start,
-                self.timeout,
-            )
-            if not status.ok:
-                raise OSError(f"Bytes failed to read from open file: {status.message}")
-            return data
-        finally:
-            status, _n = await _async_wrap(
-                _myFile.close,
-                self.timeout,
-            )
+    async def _cat_file(
+        self, path: str, start: int | None, end: int | None, **kwargs: Any
+    ) -> Any:
+        _myFile = await self._readonly_filehandle_cache._open(
+            self.unstrip_protocol(path),
+            self.timeout,
+        )
+        n_bytes = end
+        if start is not None and end is not None:
+            n_bytes = end - start
 
-    async def _get_max_chunk_info(self, file: Any) -> tuple[int, int]:
+        status, data = await _async_wrap(_myFile.read)(
+            start or 0,
+            n_bytes or 0,
+            self.timeout,
+        )
+        if not status.ok:
+            raise OSError(f"Bytes failed to read from open file: {status.message}")
+        return data
+
+    async def _get_file(
+        self, rpath: str, lpath: str, chunk_size: int = 262_144, **kwargs: Any
+    ) -> None:
+        # Open the remote file for reading
+        remote_file = await self._readonly_filehandle_cache._open(
+            self.unstrip_protocol(rpath),
+            self.timeout,
+        )
+
+        with open(lpath, "wb") as local_file:
+            start: int = 0
+            while True:
+                # Read a chunk of content from the remote file
+                status, chunk = await _async_wrap(remote_file.read)(
+                    start, chunk_size, self.timeout
+                )
+                start += chunk_size
+
+                if not status.ok:
+                    raise OSError(f"Remote file failed to read: {status.message}")
+
+                # Break if there is no more content
+                if not chunk:
+                    break
+
+                # Write the chunk to the local file
+                local_file.write(chunk)
+
+    @classmethod
+    async def _get_max_chunk_info(cls, file: Any) -> tuple[int, int]:
         """Queries the XRootD server for info required for pyxrootd vector_read() function.
         Queries for maximum number of chunks and the maximum chunk size allowed by the server.
 
@@ -421,20 +555,31 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         Tuple of max chunk size and max number of chunks. Both ints.
         """
         data_server = file.get_property("DataServer")
-        if data_server not in XRootDFileSystem._dataserver_info_cache:
-            status, result = await _async_wrap(
-                self._myclient.query, QueryCode.CONFIG, "readv_iov_max readv_ior_max"
+        if data_server == "":
+            return cls.default_max_num_chunks, cls.default_max_chunk_size
+        # Normalize to URL
+        data_server = client.URL(data_server)
+        data_server = f"{data_server.protocol}://{data_server.hostid}/"
+        if data_server not in cls._dataserver_info_cache:
+            fs = client.FileSystem(data_server)
+            status, result = await _async_wrap(fs.query)(
+                QueryCode.CONFIG, "readv_iov_max readv_ior_max"
             )
             if not status.ok:
                 raise OSError(
                     f"Server query for vector read info failed: {status.message}"
                 )
-            max_num_chunks, max_chunk_size = map(int, result.split(b"\n", 1))
-            XRootDFileSystem._dataserver_info_cache[data_server] = {
-                "max_num_chunks": int(max_num_chunks),
-                "max_chunk_size": int(max_chunk_size),
+            try:
+                max_num_chunks, max_chunk_size = map(int, result.split(b"\n", 1))
+            except ValueError:
+                raise OSError(
+                    f"Server query for vector read info failed: could not parse {result!r}"
+                ) from None
+            cls._dataserver_info_cache[data_server] = {
+                "max_num_chunks": max_num_chunks,
+                "max_chunk_size": max_chunk_size,
             }
-        info = XRootDFileSystem._dataserver_info_cache[data_server]
+        info = cls._dataserver_info_cache[data_server]
         return (info["max_num_chunks"], info["max_chunk_size"])
 
     async def _cat_vector_read(
@@ -456,39 +601,24 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         Tuple containing path name and a list of returned
         bytes in the same order as requested.
         """
-        try:
-            _myFile = client.File()
-            status, _n = await _async_wrap(
-                _myFile.open,
-                self.protocol + "://" + self.storage_options["hostid"] + "/" + path,
-                OpenFlags.READ,
-                self.timeout,
-            )
+        _myFile = await self._readonly_filehandle_cache._open(
+            self.unstrip_protocol(path),
+            self.timeout,
+        )
+
+        max_num_chunks, max_chunk_size = await self._get_max_chunk_info(_myFile)
+        vectors = _chunks_to_vectors(chunks, max_num_chunks, max_chunk_size)
+
+        coros = [_async_wrap(_myFile.vector_read)(v, self.timeout) for v in vectors]
+
+        results = await _run_coros_in_chunks(coros, batch_size=batch_size, nofiles=True)
+        result_bufs = []
+        for status, buffers in results:
             if not status.ok:
-                raise OSError(f"File did not open properly: {status.message}")
+                raise OSError(f"File did not vector_read properly: {status.message}")
+            result_bufs.append(buffers)
+        deets = _vectors_to_chunks(chunks, result_bufs)
 
-            max_num_chunks, max_chunk_size = await self._get_max_chunk_info(_myFile)
-            vectors = _chunks_to_vectors(chunks, max_num_chunks, max_chunk_size)
-
-            coros = [_async_wrap(_myFile.vector_read, v, self.timeout) for v in vectors]
-
-            results = await _run_coros_in_chunks(
-                coros, batch_size=batch_size, nofiles=True
-            )
-            result_bufs = []
-            for status, buffers in results:
-                if not status.ok:
-                    raise OSError(
-                        f"File did not vector_read properly: {status.message}"
-                    )
-                result_bufs.append(buffers)
-            deets = _vectors_to_chunks(chunks, result_bufs)
-
-        finally:
-            status, _n = await _async_wrap(
-                _myFile.close,
-                self.timeout,
-            )
         return (path, deets)
 
     async def _cat_ranges(
@@ -599,10 +729,8 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
                 **kwargs,
             )
             if compression is not None:
-                from fsspec.compression import compr  # type: ignore[import-not-found]
-                from fsspec.core import (  # type: ignore[import-not-found]
-                    get_compression,
-                )
+                from fsspec.compression import compr
+                from fsspec.core import get_compression
 
                 compression = get_compression(path, compression)
                 compress = compr[compression]
@@ -629,9 +757,9 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
         from fsspec.core import caches
 
         self.timeout = fs.timeout
-        # by this point, mode will have a "b" in it
-        # update "+" mode removed for now since seek() is read only
-        if "x" in mode:
+        if mode == "r+b":
+            self.mode = OpenFlags.UPDATE
+        elif "x" in mode:
             self.mode = OpenFlags.NEW
         elif "a" in mode:
             self.mode = OpenFlags.UPDATE
@@ -645,13 +773,34 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
         if not isinstance(path, str):
             raise ValueError(f"Path expected to be string, path: {path}")
 
+        self.fs = fs
+        # Ensure any read-only handle is closed
+        fs.invalidate_cache(path)
+
+        # Try opening with given pathname before trying to locate all sources (if requested)
         self._myFile = client.File()
         status, _n = self._myFile.open(
-            fs.protocol + "://" + fs.storage_options["hostid"] + "/" + path,
+            fs.unstrip_protocol(path),
             self.mode,
             timeout=self.timeout,
         )
-
+        if not status.ok and "r" in mode and self.fs.locate_all_sources:
+            self._hosts = self._locate_sources(path)
+            # Try hosts until you find an openable file
+            for i_host in range(len(self._hosts)):
+                self._myFile = client.File()
+                status, _n = self._myFile.open(
+                    fs.protocol + "://" + self._hosts[i_host] + "/" + path,
+                    self.mode,
+                    timeout=self.timeout,
+                )
+                if status.ok:
+                    # Move hosts that tried and failed to self._dismissed_hosts
+                    self._dismissed_hosts = self._hosts[:i_host]
+                    self._hosts = self._hosts[i_host:]
+                    break
+        # If above loop cannot find source OR locate_all_sources is off and we
+        # could not read file initially, end up here
         if not status.ok:
             raise OSError(f"File did not open properly: {status.message}")
 
@@ -661,7 +810,6 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
             self.metaOffset = _deets.size
 
         self.path = path
-        self.fs = fs
         self.mode = mode
         self.blocksize = (
             self.DEFAULT_BLOCK_SIZE if block_size in ["default", None] else block_size
@@ -687,7 +835,7 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
 
         self.kwargs = kwargs
 
-        if mode not in {"ab", "rb", "wb"}:
+        if mode not in {"ab", "rb", "wb", "r+b"}:
             raise NotImplementedError("File mode not supported")
         if mode == "rb":
             if size is not None:
@@ -702,6 +850,66 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
             self.forced = False
             self.location = None
             self.offset = 0
+            self.size = self._myFile.stat()[1].size
+        if mode == "r+b":
+            self.cache = caches[cache_type](
+                self.blocksize, self._fetch_range, self.size, **cache_options
+            )
+        if "a" in mode:
+            self.loc = self.size
+
+    def _locate_sources(self, logical_filename: str) -> list[str]:
+        """Find hosts that have the desired file.
+
+        Gets a list of hosts from the XRootD server that was provided when the
+        XRootDFile object was instantiated. Note that this implies it will only find
+        more hosts of the given file if self.fs is a redirector. Implementation of a
+        solution from the Pepper project in this issue:
+
+        (https://github.com/scikit-hep/fsspec-xrootd/issues/36).
+
+        If valid_sources is a non-empty list in fs.storage_options, will only return domain names
+        that are also in valid_sources
+
+        Parameters
+        ----------
+        logical_filename: The logical filename of the file. (ex: "//store/mc/other/stuff/file.root")
+
+        Returns
+        -------
+        List of domain names that host the file
+        """
+        myclient = self.fs._myclient
+        # From Pepper:
+        # The flag PrefName (to get domain names instead of IP addresses) does
+        # not exist in the Python bindings. However, MAKEPATH has the same value
+        status, loc = myclient.locate(logical_filename, client.flags.OpenFlags.MAKEPATH)
+        if loc is None:
+            raise OSError("XRootD error: " + status.message)
+        hosts = []
+        for r in loc:
+            if len(r.address.split(":")) > 1:
+                # Strip off the port number if necessary
+                clean_address = "".join(r.address.split(":")[:-1])
+            else:
+                clean_address = r.address
+            if (clean_address in self.fs.valid_sources) or (
+                len(self.fs.valid_sources) == 0
+            ):
+                hosts.append(clean_address)
+                logging.debug(f"Added host {clean_address} to _hosts")
+            else:
+                logging.debug(
+                    f"Host {clean_address} not in valid_sources {self.fs.valid_sources}"
+                )
+        if len(hosts) == 0:
+            err_msg = f"XRootD error: No hosts for file {logical_filename} found using XRootD server {self.fs.storage_options['hostid']}"
+            if len(self.fs.valid_sources) > 0:
+                vld_src_msg = f" and valid sources {self.fs.valid_sources}"
+                raise OSError(err_msg + vld_src_msg)
+            else:
+                raise OSError(err_msg)
+        return hosts
 
     def _fetch_range(self, start: int, end: int) -> Any:
         status, data = self._myFile.read(
@@ -710,26 +918,6 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
         if not status.ok:
             raise OSError(f"File did not read properly: {status.message}")
         return data
-
-    def flush(self, force: bool = False) -> None:
-        if self.closed:
-            raise ValueError("Flush on closed file")
-        if force and self.forced:
-            raise ValueError("Force flush cannot be called more than once")
-        if force:
-            self.forced = True
-
-        if self.mode not in {"wb", "ab"}:
-            # no-op to flush on read-mode
-            return
-
-        if not force and self.buffer.tell() < self.blocksize:
-            # Defer write on small block
-            return
-
-        if self._upload_chunk(final=force) is not False:
-            self.offset += self.buffer.seek(0, 2)
-            self.buffer = io.BytesIO()
 
     def _upload_chunk(self, final: bool = False) -> Any:
         status, _n = self._myFile.write(
@@ -763,3 +951,81 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
         if not status.ok:
             raise OSError(f"File did not close properly: {status.message}")
         self.closed = True
+
+    def seek(self, loc: int, whence: int = 0) -> int:
+        """Set current file location
+
+        Parameters
+        ----------
+        loc: int
+            byte location
+        whence: {0, 1, 2}
+            from start of file, current location or end of file, resp.
+        """
+        loc = int(loc)
+        if whence == 0:
+            nloc = loc
+        elif whence == 1:
+            nloc = self.loc + loc
+        elif whence == 2:
+            nloc = self.size + loc
+        else:
+            raise ValueError(f"invalid whence ({whence}, should be 0, 1 or 2)")
+        if nloc < 0:
+            raise ValueError("Seek before start of file")
+        self.loc = nloc
+        return self.loc
+
+    def writable(self) -> bool:
+        """Whether opened for writing"""
+        return self.mode in {"wb", "ab", "xb", "r+b"} and not self.closed
+
+    def write(self, data: bytes) -> int:
+        """
+        Write data to buffer.
+
+        Buffer only sent on flush() or if buffer is greater than
+        or equal to blocksize.
+
+        Parameters
+        ----------
+        data: bytes
+            Set of bytes to be written.
+        """
+        if not self.writable():
+            raise ValueError("File not in write mode")
+        if self.closed:
+            raise ValueError("I/O operation on closed file.")
+        if self.forced:
+            raise ValueError("This file has been force-flushed, can only close")
+        status, _n = self._myFile.write(data, self.loc, len(data), timeout=self.timeout)
+        self.loc += len(data)
+        self.size = max(self.size, self.loc)
+        if not status.ok:
+            raise OSError(f"File did not write properly: {status.message}")
+        return len(data)
+
+    def read(self, length: int = -1) -> bytes:
+        """
+        Return data from cache, or fetch pieces as necessary
+
+        Parameters
+        ----------
+        length: int (-1)
+            Number of bytes to read; if <0, all remaining bytes.
+        """
+        length = int(length)
+        if self.mode not in {"rb", "r+b"}:
+            raise ValueError("File not in read mode")
+        if length < 0:
+            length = self.size - self.loc
+        if self.closed:
+            raise ValueError("I/O operation on closed file.")
+        if length == 0:
+            # don't even bother calling fetch
+            return b""
+        # for mypy
+        out = cast(bytes, self.cache._fetch(self.loc, self.loc + length))
+
+        self.loc += len(out)
+        return out
