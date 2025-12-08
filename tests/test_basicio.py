@@ -193,12 +193,6 @@ def test_write_fsspec(server, clear_server):
         assert f.read() == TESTDATA1
 
 
-
-@pytest.mark.skipif(macos, reason="Not working on macos")
-def test_append_fsspec(server, clear_server):
-    url, path = server
-    with open(path + "/testfile.txt", "w") as fout:
-
 def test_write_rpb_fsspec(localserver, clear_server):
     """Test writing with r+b as in uproot"""
     remoteurl, _ = localserver
