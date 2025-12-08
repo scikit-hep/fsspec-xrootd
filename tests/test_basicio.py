@@ -309,6 +309,7 @@ def test_touch_modified(server, clear_server):
 def test_dir_cache(server, clear_server):
     url, path = server
 
+
 def test_touch_nonexistent(localserver, clear_server):
     remoteurl, localpath = localserver
     fs, token, path = fsspec.get_fs_token_paths(
