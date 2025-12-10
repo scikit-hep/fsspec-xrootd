@@ -55,10 +55,6 @@ def localserver(tmpdir_factory):
     proc.wait(timeout=10)
 
 
-def test_ping(server, clear_server):
-    url, path = server
-
-
 @pytest.fixture()
 def clear_server(localserver):
     remoteurl, localpath = localserver
@@ -304,10 +300,6 @@ def test_touch_modified(server, clear_server):
     t3 = fs.modified(path[0] + "/testfile.txt")
     assert fs.read_block(path[0] + "/testfile.txt", 0, 4) == b""
     assert t1 < t2 and t2 < t3
-
-
-def test_dir_cache(server, clear_server):
-    url, path = server
 
 
 def test_touch_nonexistent(localserver, clear_server):
