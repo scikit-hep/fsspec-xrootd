@@ -223,10 +223,10 @@ def test_append_fsspec(localserver, clear_server):
     remoteurl, localpath = localserver
     with open(localpath + "/testfile.txt", "w") as fout:
         fout.write(TESTDATA1)
-    with fsspec.open(url + "/testfile.txt", "at") as f:
+    with fsspec.open(remoteurl + "/testfile.txt", "at") as f:
         f.write(TESTDATA2)
         f.flush()
-    with open(path + "/testfile.txt") as f:
+    with open(localpath + "/testfile.txt") as f:
         assert f.read() == TESTDATA1 + TESTDATA2
 
 
@@ -315,7 +315,7 @@ def test_touch_nonexistent(localserver, clear_server):
 def test_dir_cache(localserver, clear_server):
     remoteurl, localpath = localserver
     fs, token, path = fsspec.get_fs_token_paths(
-        url, "rt", storage_options={"listings_expiry_time": expiry_time}
+        remoteurl, "rt", storage_options={"listings_expiry_time": expiry_time}
     )
     fs.mkdir(path[0] + "/Folder1")
     fs.mkdir(path[0] + "/Folder2")
