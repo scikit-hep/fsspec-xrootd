@@ -223,7 +223,7 @@ class ReadonlyFileHandleCache:
 class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
     protocol = "root"
     root_marker = "/"
-    default_timeout = 60
+    default_timeout = 0
     async_impl = True
     default_max_num_chunks = 1024
     default_max_chunk_size = 2097136
@@ -259,6 +259,9 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
             If given and locate_all_sources is True, fsspec will only reject any file host
             not in this list. Entries should be of the form ie: `cmsxrootd-site1.fnal.gov`
             (no port number)
+        timeout = 0: int
+            Sets the xrootd client timeout in seconds. 0 means no timeout.
+            This is option is part of fsspec storage_options.
         """
         super().__init__(self, asynchronous=asynchronous, loop=loop, **storage_options)
         self.timeout = storage_options.get("timeout", XRootDFileSystem.default_timeout)
