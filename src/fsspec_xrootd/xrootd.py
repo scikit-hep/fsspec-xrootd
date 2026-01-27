@@ -223,7 +223,7 @@ class ReadonlyFileHandleCache:
 class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
     protocol = "root"
     root_marker = "/"
-    default_timeout = 60
+    default_timeout = 0
     async_impl = True
     default_max_num_chunks = 1024
     default_max_chunk_size = 2097136
