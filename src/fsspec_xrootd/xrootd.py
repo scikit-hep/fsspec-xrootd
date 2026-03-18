@@ -4,6 +4,7 @@ import asyncio
 import io
 import logging
 import os.path
+import stat as _stat
 import time
 import warnings
 import weakref
@@ -220,6 +221,36 @@ class ReadonlyFileHandleCache:
         return handle
 
 
+def _flags_to_mode(flags: StatInfoFlags) -> int:
+    """Convert XRootD ``StatInfoFlags`` to a POSIX ``st_mode`` integer.
+
+    XRootD exposes three relevant bits: ``IS_DIR``, ``IS_READABLE``, and
+    ``IS_WRITABLE``.  The mapping used here follows the convention applied by
+    gfal2-util and the EOS storage system:
+
+    * Readable directory → ``dr-xr-xr-x`` (0o40555)
+    * Readable regular file → ``-r--r--r--`` (0o100444)
+    * Writable adds user-write (0o200) on top of the above.
+    * Files/directories that are neither readable nor writable → mode 0.
+    """
+    if flags & StatInfoFlags.IS_DIR:
+        ftype = _stat.S_IFDIR
+        # Directories need the execute bit to be traversable.
+        perms = (0o555 if flags & StatInfoFlags.IS_READABLE else 0) | (
+            0o200 if flags & StatInfoFlags.IS_WRITABLE else 0
+        )
+    elif flags & StatInfoFlags.OTHER:
+        # Symlinks and other special files — preserve type, no permissions.
+        ftype = _stat.S_IFLNK
+        perms = 0
+    else:
+        ftype = _stat.S_IFREG
+        perms = (0o444 if flags & StatInfoFlags.IS_READABLE else 0) | (
+            0o200 if flags & StatInfoFlags.IS_WRITABLE else 0
+        )
+    return ftype | perms
+
+
 class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
     protocol = "root"
     root_marker = "/"
@@ -417,35 +448,26 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         if deet is not None and len(deet) != 0:
             for item in deet:
                 if item["name"] == path:
-                    return {
-                        "name": path,
-                        "size": item["size"],
-                        "type": item["type"],
-                    }
+                    # Return the full cached entry (including mtime/mode if present).
+                    return item
             raise OSError("_ls_from_cache() failed to function")
         else:
             status, deet = await _async_wrap(self._myclient.stat)(path, self.timeout)
             if not status.ok:
                 raise OSError(f"File stat request failed: {status.message}")
             if deet.flags & StatInfoFlags.IS_DIR:
-                ret = {
-                    "name": path,
-                    "size": deet.size,
-                    "type": "directory",
-                }
+                ftype = "directory"
             elif deet.flags & StatInfoFlags.OTHER:
-                ret = {
-                    "name": path,
-                    "size": deet.size,
-                    "type": "other",
-                }
+                ftype = "other"
             else:
-                ret = {
-                    "name": path,
-                    "size": deet.size,
-                    "type": "file",
-                }
-            return ret
+                ftype = "file"
+            return {
+                "name": path,
+                "size": deet.size,
+                "type": ftype,
+                "mtime": deet.modtime,
+                "mode": _flags_to_mode(deet.flags),
+            }
 
     async def _ls(self, path: str, detail: bool = True, **kwargs: Any) -> list[Any]:
         listing = []
@@ -466,30 +488,22 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
                     f"Server failed to provide directory info: {status.message}"
                 )
             for item in deets:
-                if item.statinfo.flags & StatInfoFlags.IS_DIR:
-                    listing.append(
-                        {
-                            "name": path + "/" + item.name,
-                            "size": item.statinfo.size,
-                            "type": "directory",
-                        }
-                    )
-                elif item.statinfo.flags & StatInfoFlags.OTHER:
-                    listing.append(
-                        {
-                            "name": path + "/" + item.name,
-                            "size": item.statinfo.size,
-                            "type": "other",
-                        }
-                    )
+                flags = item.statinfo.flags
+                if flags & StatInfoFlags.IS_DIR:
+                    ftype = "directory"
+                elif flags & StatInfoFlags.OTHER:
+                    ftype = "other"
                 else:
-                    listing.append(
-                        {
-                            "name": path + "/" + item.name,
-                            "size": item.statinfo.size,
-                            "type": "file",
-                        }
-                    )
+                    ftype = "file"
+                listing.append(
+                    {
+                        "name": path + "/" + item.name,
+                        "size": item.statinfo.size,
+                        "type": ftype,
+                        "mtime": item.statinfo.modtime,
+                        "mode": _flags_to_mode(flags),
+                    }
+                )
             self.dircache[path] = listing
             if detail:
                 return listing
