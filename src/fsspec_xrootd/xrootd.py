@@ -449,7 +449,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
             for item in deet:
                 if item["name"] == path:
                     # Return the full cached entry (including mtime/mode if present).
-                    return item
+                    return cast(dict[str, Any], item)
             raise OSError("_ls_from_cache() failed to function")
         else:
             status, deet = await _async_wrap(self._myclient.stat)(path, self.timeout)
