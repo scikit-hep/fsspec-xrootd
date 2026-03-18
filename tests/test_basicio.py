@@ -493,3 +493,117 @@ def test_close_while_reading(localserver, clear_server):
         assert read_start < close_stop < read_stop
 
     asyncio.run(run())
+
+
+def test_mv(localserver, clear_server):
+    """mv() should move a file and invalidate the cache."""
+    remoteurl, localpath = localserver
+    with open(localpath + "/src.txt", "w") as fout:
+        fout.write(TESTDATA1)
+
+    fs, _, (prefix,) = fsspec.get_fs_token_paths(remoteurl)
+    src = prefix + "/src.txt"
+    dst = prefix + "/dst.txt"
+
+    fs.mv(src, dst)
+    time.sleep(sleep_time)
+
+    assert not fs.exists(src)
+    assert fs.exists(dst)
+    assert fs.cat(dst) == TESTDATA1.encode()
+
+
+def test_mv_directory(localserver, clear_server):
+    """mv() should move a directory."""
+    remoteurl, localpath = localserver
+    os.makedirs(localpath + "/srcdir")
+    with open(localpath + "/srcdir/file.txt", "w") as fout:
+        fout.write(TESTDATA1)
+
+    fs, _, (prefix,) = fsspec.get_fs_token_paths(remoteurl)
+    src = prefix + "/srcdir"
+    dst = prefix + "/dstdir"
+
+    fs.mv(src, dst)
+    time.sleep(sleep_time)
+
+    assert not fs.exists(src)
+    assert fs.exists(dst)
+    assert fs.exists(dst + "/file.txt")
+
+
+def test_chmod(localserver, clear_server):
+    """chmod() should change the mode of a file."""
+    remoteurl, localpath = localserver
+    with open(localpath + "/testfile.txt", "w") as fout:
+        fout.write(TESTDATA1)
+
+    fs, _, (prefix,) = fsspec.get_fs_token_paths(remoteurl)
+    path = prefix + "/testfile.txt"
+
+    fs.chmod(path, 0o644)
+    info = fs.info(path)
+    # The server returns mode bits; check at least that the call succeeded
+    # and that the info dict contains a 'mode' key.
+    assert "mode" in info
+
+
+def test_checksum(localserver, clear_server):
+    """checksum() should return a (algorithm, value) tuple."""
+    remoteurl, localpath = localserver
+    with open(localpath + "/testfile.txt", "w") as fout:
+        fout.write(TESTDATA1)
+
+    fs, _, (prefix,) = fsspec.get_fs_token_paths(remoteurl)
+    path = prefix + "/testfile.txt"
+
+    alg, value = fs.checksum(path, "adler32")
+    assert alg.lower() == "adler32"
+    assert len(value) > 0
+    # Value should be a valid hex string
+    int(value, 16)
+
+
+def test_ls_on_file(localserver, clear_server):
+    """ls() called on a file path should return a single-entry list, not raise."""
+    remoteurl, localpath = localserver
+    with open(localpath + "/testfile.txt", "w") as fout:
+        fout.write(TESTDATA1)
+
+    fs, _, (prefix,) = fsspec.get_fs_token_paths(remoteurl)
+    path = prefix + "/testfile.txt"
+
+    # detail=True
+    entries = fs.ls(path, detail=True)
+    assert len(entries) == 1
+    assert entries[0]["type"] == "file"
+
+    # detail=False
+    names = fs.ls(path, detail=False)
+    assert len(names) == 1
+
+
+def test_info_dict_fields(localserver, clear_server):
+    """info() and ls() entries should include mtime, mode, uid, gid, nlink."""
+    remoteurl, localpath = localserver
+    with open(localpath + "/testfile.txt", "w") as fout:
+        fout.write(TESTDATA1)
+
+    fs, _, (prefix,) = fsspec.get_fs_token_paths(remoteurl)
+    path = prefix + "/testfile.txt"
+
+    info = fs.info(path)
+    for field in ("mtime", "mode", "uid", "gid", "nlink"):
+        assert field in info, f"Missing field: {field}"
+
+    assert isinstance(info["mtime"], (int, float))
+    assert info["mtime"] > 0
+    assert isinstance(info["mode"], int)
+    assert info["mode"] > 0
+
+    # ls() entries should also carry these fields
+    ls_entries = fs.ls(prefix, detail=True)
+    file_entry = next(e for e in ls_entries if e["name"].endswith("testfile.txt"))
+    for field in ("mtime", "mode", "uid", "gid", "nlink"):
+        assert field in file_entry, f"ls entry missing field: {field}"
+    assert file_entry["mtime"] > 0
