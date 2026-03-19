@@ -466,7 +466,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         if not status.ok:
             raise OSError(f"Checksum query failed: {status.message}")
         text = response.decode() if isinstance(response, bytes) else response
-        parts = text.strip('\x00').strip().split()
+        parts = text.strip("\x00").strip().split()
         if len(parts) < 2:
             raise OSError(f"Unexpected checksum response: {text!r}")
         return parts[0], parts[1]
