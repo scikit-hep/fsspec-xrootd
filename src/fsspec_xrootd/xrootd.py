@@ -460,14 +460,13 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         Returns a (algorithm, value) tuple. Raises OSError if the server
         does not support checksums or if the file does not exist.
         """
-        arg = f"{algorithm} {path}"
         status, response = await _async_wrap(self._myclient.query)(
-            QueryCode.CHECKSUM, arg, self.timeout
+            QueryCode.CHECKSUM, path, self.timeout
         )
         if not status.ok:
             raise OSError(f"Checksum query failed: {status.message}")
         text = response.decode() if isinstance(response, bytes) else response
-        parts = text.strip().split()
+        parts = text.strip('\x00').strip().split()
         if len(parts) < 2:
             raise OSError(f"Unexpected checksum response: {text!r}")
         return parts[0], parts[1]
