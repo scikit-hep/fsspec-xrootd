@@ -1,7 +1,65 @@
 [build-system]
-requires = ["setuptools>=42", "setuptools_scm[toml]>=3.4"]
+requires = ["setuptools>=77", "setuptools_scm[toml]>=3.4"]
 build-backend = "setuptools.build_meta"
 
+[project]
+name = "fsspec_xrootd"
+dynamic = ["version"]
+description = "xrootd implementation for fsspec"
+readme = { file = "README.md", content-type = "text/markdown" }
+requires-python = ">=3.9"
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
+authors = [{ name = "Scott Demarest", email = "rockets1194@gmail.com" }]
+maintainers = [
+    { name = "Scikit-HEP", email = "scikit-hep-admins@googlegroups.com" },
+]
+classifiers = [
+    "Development Status :: 1 - Planning",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = ["fsspec"]
+
+[project.urls]
+Documentation = "https://fsspec_xrootd.readthedocs.io/"
+"Bug Tracker" = "https://github.com/scikit-hep/fsspec-xrootd/issues"
+Discussions = "https://github.com/scikit-hep/fsspec-xrootd/discussions"
+Changelog = "https://github.com/scikit-hep/fsspec-xrootd/releases"
+
+[project.entry-points."fsspec.specs"]
+root = "fsspec_xrootd:XRootDFileSystem"
+
+[project.optional-dependencies]
+dev = ["pytest>=6"]
+docs = [
+    "Sphinx>=4.0",
+    "myst-parser>=0.13",
+    "sphinx-book-theme>=0.1.0",
+    "sphinx-copybutton",
+]
+test = ["pytest>=6", "pytest-rerunfailures", "pytest-timeout"]
+
+[tool.setuptools]
+include-package-data = true
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+fsspec_xrootd = ["_version.pyi", "py.typed"]
 
 [tool.setuptools_scm]
 write_to = "src/fsspec_xrootd/_version.py"
@@ -28,28 +86,19 @@ warn_unreachable = true
 ignore_missing_imports = true
 
 
-[tool.check-manifest]
-ignore = [
-    ".github/**",
-    "docs/**",
-    ".pre-commit-config.yaml",
-    ".readthedocs.yml",
-    "src/*/_version.py",
-    "noxfile.py",
-]
-
-[tool.isort]
-profile = "black"
+[tool.ruff]
+target-version = "py39"
 
 
-[tool.pylint]
-master.py-version = "3.7"
-master.ignore-paths = ["src/fsspec_xrootd/_version.py"]
-reports.output-format = "colorized"
-similarities.ignore-imports = "yes"
-messages_control.disable = [
-    "design",
-    "fixme",
-    "line-too-long",
-    "wrong-import-position",
-]
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "RUF100", "T20", "UP", "W"]
+ignore = ["E203", "E501", "E722", "B905"]
+
+
+[tool.ruff.lint.isort]
+required-imports = ["from __future__ import annotations"]
+
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["T20"]
+"noxfile.py" = ["T20"]
