@@ -12,15 +12,14 @@ If you don't have pipx (pip for applications), then you can install with with
 pip is reasonable). If you use macOS, then pipx and nox are both in brew, use
 `brew install pipx nox`.
 
-To use, run `nox`. This will lint and test using every installed version of
-Python on your system, skipping ones that are not installed. You can also run
-specific jobs:
+To use, run `nox`. This will run the configured lint and test sessions in
+temporary environments for you. You can also run specific jobs:
 
 ```console
-$ nox -s lint  # Lint only
-$ nox -s tests-3.9  # Python 3.9 tests only
-$ nox -s docs -- serve  # Build and serve the docs
-$ nox -s build  # Make an SDist and wheel
+nox -s lint  # Lint only
+nox -s tests  # Run tests in a temporary environment
+nox -s docs -- serve  # Build and serve the docs
+nox -s build  # Make an SDist and wheel
 ```
 
 Nox handles everything for you, including setting up an temporary virtual
