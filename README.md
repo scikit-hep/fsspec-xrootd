@@ -12,11 +12,10 @@ Supports Python 3.9 and newer.
 
 ## Purpose
 
-To allow fsspec to use XRootD accessible storage systems. Install
-fsspec-xrootd with the optional ``xrootd`` extra alongside fsspec and have easy
-access to files stored on XRootD servers. Once installed, fsspec will be able
-to work with urls with the 'root' protocol. Only tested with Linux at this
-time.
+To allow fsspec to use XRootD accessible storage systems. Install fsspec-xrootd
+with the optional `xrootd` extra alongside fsspec and have easy access to files
+stored on XRootD servers. Once installed, fsspec will be able to work with urls
+with the 'root' protocol. Only tested with Linux at this time.
 
 ## Documentation
 

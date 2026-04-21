@@ -27,14 +27,12 @@ def __getattr__(name: str) -> Any:
         if exc.name == "XRootD":
             raise ModuleNotFoundError(
                 "The 'xrootd' package is required to use fsspec-xrootd. "
-                "Install it with `pip install \"fsspec-xrootd[xrootd]\"`."
+                'Install it with `pip install "fsspec-xrootd[xrootd]"`.'
             ) from exc
         raise
 
-    globals().update(
-        {
-            "XRootDFile": XRootDFile,
-            "XRootDFileSystem": XRootDFileSystem,
-        }
-    )
+    globals().update({
+        "XRootDFile": XRootDFile,
+        "XRootDFileSystem": XRootDFileSystem,
+    })
     return globals()[name]

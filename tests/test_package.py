@@ -4,8 +4,9 @@ import builtins
 import importlib
 import sys
 
-import fsspec_xrootd as m
 import pytest
+
+import fsspec_xrootd as m
 
 
 def test_version():
