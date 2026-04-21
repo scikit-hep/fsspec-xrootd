@@ -29,4 +29,4 @@ def test_import_without_xrootd(monkeypatch):
 
     assert module.__version__
     with pytest.raises(ModuleNotFoundError, match="Install it with"):
-        module.XRootDFileSystem
+        _ = module.XRootDFileSystem
