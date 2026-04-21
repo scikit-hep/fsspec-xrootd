@@ -9,9 +9,10 @@ import time
 import warnings
 import weakref
 from collections import defaultdict
+from collections.abc import Coroutine, Iterable
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Any, Callable, Coroutine, Iterable, TypeVar, cast
+from typing import Any, Callable, TypeVar, cast
 
 from fsspec.asyn import AsyncFileSystem, _run_coros_in_chunks, sync, sync_wrapper
 from fsspec.exceptions import FSTimeoutError
@@ -553,20 +554,18 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
                     ftype = "other"
                 else:
                     ftype = "file"
-                listing.append(
-                    {
-                        "name": path + "/" + item.name,
-                        "size": item.statinfo.size,
-                        "type": ftype,
-                        "mtime": item.statinfo.modtime,
-                        "mode": _flags_to_mode(flags),
-                        "uid": 0,
-                        "gid": 0,
-                        "nlink": 1,
-                        "atime": item.statinfo.modtime,
-                        "ctime": item.statinfo.modtime,
-                    }
-                )
+                listing.append({
+                    "name": path + "/" + item.name,
+                    "size": item.statinfo.size,
+                    "type": ftype,
+                    "mtime": item.statinfo.modtime,
+                    "mode": _flags_to_mode(flags),
+                    "uid": 0,
+                    "gid": 0,
+                    "nlink": 1,
+                    "atime": item.statinfo.modtime,
+                    "ctime": item.statinfo.modtime,
+                })
             self.dircache[path] = listing
             if detail:
                 return listing
@@ -1006,9 +1005,6 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
             self.buffer.tell(),
             timeout=self.timeout,
         )
-        if final:
-            self.closed
-            self.close()
         if not status.ok:
             raise OSError(f"File did not write properly: {status.message}")
         return status.ok

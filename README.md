@@ -8,6 +8,8 @@ An XRootD implementation for fsspec.
 pip install fsspec-xrootd
 ```
 
+Supports Python 3.9 and newer.
+
 ## Purpose
 
 To allow fsspec to use XRootD accessible storage systems. Install fsspec-xrootd
