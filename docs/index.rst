@@ -9,12 +9,15 @@ Install
 
 .. code:: bash
 
-    pip install fsspec-xrootd
+    pip install "fsspec-xrootd[xrootd]"
 
 Purpose
 -------
 
-To allow fsspec to use XRootD accessible storage systems. Install fsspec-xrootd alongside fsspec and have easy access to files stored on XRootD serevrs. Once installed, fsspec will be able to work with urls with the 'root' protocol. Only tested with Linux at this time.
+To allow fsspec to use XRootD accessible storage systems. Install
+``fsspec-xrootd[xrootd]`` alongside fsspec and have easy access to files stored
+on XRootD servers. Once installed, fsspec will be able to work with urls with
+the ``root`` protocol. Only tested with Linux at this time.
 
 .. toctree::
    :maxdepth: 3
