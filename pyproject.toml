@@ -50,6 +50,7 @@ docs = [
     "sphinx-copybutton",
 ]
 test = ["pytest>=6", "pytest-rerunfailures", "pytest-timeout"]
+xrootd = ["xrootd>=6.0.0"]
 
 [tool.setuptools]
 include-package-data = true

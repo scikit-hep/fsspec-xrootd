@@ -35,6 +35,8 @@ def localserver(tmpdir_factory):
         fout.write("all.export /Folder\n")
         fout.write(f"oss.localroot {srvdir}\n")
     xrdexe = shutil.which("xrootd")
+    if xrdexe is None:
+        pytest.skip("xrootd executable is required for basic I/O integration tests")
     proc = subprocess.Popen([xrdexe, "-p", str(XROOTD_PORT), "-c", cfgfile])
     time.sleep(2)  # give it some startup
     yield "root://localhost//Folder", tempPath
