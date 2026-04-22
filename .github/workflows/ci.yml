@@ -51,7 +51,7 @@ jobs:
       - name: Install XRootD server
         run: mamba install -c conda-forge xrootd
       - name: Install package
-        run: python -m pip install ".[test,xrootd]"
+        run: python -m pip install ".[test]"
       - name: Test package
         run: |
           python -m pytest -vv tests --reruns 3 --reruns-delay 5 --only-rerun "(?i)OSError|FileNotFoundError|timeout|expired|connection|socket"
@@ -63,8 +63,8 @@ jobs:
           git clone https://github.com/scikit-hep/uproot5.git uproot
           git -C uproot checkout tags/v${UPROOT_VERSION}
           (cd uproot && python -m pip install . --group test)
-          # Install xrootd-fsspec again because it may have been overwritten by uproot
-          python -m pip install ".[test,xrootd]"
+          # Reinstall fsspec-xrootd after uproot without replacing the conda xrootd runtime.
+          python -m pip install ".[test]"
           python -m pytest -vv -k "xrootd" uproot/tests --reruns 10 --reruns-delay 30 --only-rerun "(?i)OSError|FileNotFoundError|timeout|expired|connection|socket"
 
   pass:
