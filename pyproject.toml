@@ -30,7 +30,7 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering",
 ]
-dependencies = ["fsspec"]
+dependencies = ["fsspec", "xrootd>=6.0.3"]
 
 [project.urls]
 Documentation = "https://fsspec_xrootd.readthedocs.io/"
@@ -50,7 +50,6 @@ docs = [
     "sphinx-copybutton",
 ]
 test = ["pytest>=6", "pytest-rerunfailures", "pytest-timeout"]
-xrootd = ["xrootd>=6.0.0"]
 
 [tool.setuptools]
 include-package-data = true

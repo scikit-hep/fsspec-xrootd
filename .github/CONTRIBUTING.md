@@ -32,7 +32,7 @@ You can set up a development environment by running:
 ```bash
 python3 -m venv .venv
 source ./.venv/bin/activate
-pip install -v -e .[dev,xrootd]
+pip install -v -e .[dev]
 ```
 
 If you have the
@@ -41,7 +41,7 @@ can instead do:
 
 ```bash
 py -m venv .venv
-py -m install -v -e .[dev,xrootd]
+py -m install -v -e .[dev]
 ```
 
 # Post setup
@@ -64,6 +64,11 @@ Use pytest to run the unit checks:
 ```bash
 pytest
 ```
+
+The local integration tests also start an `xrootd` server process. If the Python
+wheel does not provide an `xrootd` executable in your environment, install one
+separately, for example via `conda install -c conda-forge xrootd` or
+`brew install xrootd`.
 
 # Building docs
 
