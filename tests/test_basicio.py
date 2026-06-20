@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import io
 import os
+import stat
 import time
 
 import fsspec
@@ -56,12 +57,14 @@ def test_path_parsing():
     assert path == "blah"
     fs, _, (path,) = fsspec.get_fs_token_paths("root://server.com//blah")
     assert path == "/blah"
-    fs, _, paths = fsspec.get_fs_token_paths([
-        "root://server.com//blah",
-        "root://server.com//more",
-        "root://server.com/dir/",
-        "root://serv.er//dir/",
-    ])
+    fs, _, paths = fsspec.get_fs_token_paths(
+        [
+            "root://server.com//blah",
+            "root://server.com//more",
+            "root://server.com/dir/",
+            "root://serv.er//dir/",
+        ]
+    )
     assert paths == [
         "/blah",
         "/more",
@@ -571,9 +574,8 @@ def test_chmod(localserver, clear_server):
 
     fs.chmod(path, 0o644)
     info = fs.info(path)
-    # The server returns mode bits; check at least that the call succeeded
-    # and that the info dict contains a 'mode' key.
-    assert "mode" in info
+    assert stat.S_ISREG(info["mode"])
+    assert info["mode"] & 0o777 == 0o644
 
 
 def test_checksum(localserver, clear_server):
@@ -622,26 +624,52 @@ def test_ls_on_file(localserver, clear_server):
 
 
 def test_info_dict_fields(localserver, clear_server):
-    """info() and ls() entries should include mtime, mode, uid, gid, nlink."""
+    """info() and ls() entries should include fields from XRootD stat."""
     remoteurl, localpath = localserver
-    with open(localpath + "/testfile.txt", "w") as fout:
+    local_file = localpath + "/testfile.txt"
+    with open(local_file, "w") as fout:
         fout.write(TESTDATA1)
+    os.chmod(local_file, 0o640)
+    local_stat = os.stat(local_file)
 
     fs, _, (prefix,) = fsspec.get_fs_token_paths(remoteurl)
     path = prefix + "/testfile.txt"
 
     info = fs.info(path)
-    for field in ("mtime", "mode", "uid", "gid", "nlink"):
+    for field in (
+        "mtime",
+        "mode",
+        "uid",
+        "gid",
+        "nlink",
+        "atime",
+        "ctime",
+        "owner",
+        "group",
+        "ino",
+    ):
         assert field in info, f"Missing field: {field}"
 
     assert isinstance(info["mtime"], (int, float))
     assert info["mtime"] > 0
-    assert isinstance(info["mode"], int)
-    assert info["mode"] > 0
+    assert stat.S_ISREG(info["mode"])
+    assert info["mode"] & 0o777 == 0o640
+    assert info["uid"] == local_stat.st_uid
+    assert info["gid"] == local_stat.st_gid
+    assert info["owner"]
+    assert info["group"]
 
     # ls() entries should also carry these fields
     ls_entries = fs.ls(prefix, detail=True)
     file_entry = next(e for e in ls_entries if e["name"].endswith("testfile.txt"))
-    for field in ("mtime", "mode", "uid", "gid", "nlink"):
+    for field in ("mtime", "mode", "uid", "gid", "nlink", "atime", "ctime"):
         assert field in file_entry, f"ls entry missing field: {field}"
     assert file_entry["mtime"] > 0
+    assert stat.S_ISREG(file_entry["mode"])
+    assert file_entry["mode"] & 0o777 == 0o640
+    assert file_entry["uid"] == local_stat.st_uid
+    assert file_entry["gid"] == local_stat.st_gid
+
+    dir_info = fs.info(prefix)
+    assert dir_info["type"] == "directory"
+    assert stat.S_ISDIR(dir_info["mode"])
