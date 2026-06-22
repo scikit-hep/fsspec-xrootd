@@ -619,8 +619,8 @@ mean a new read on every call.</p></li>
 <dt class="sig sig-object py" id="fsspec_xrootd.XRootDFile.truncate">
 <span class="sig-name descname"><span class="pre">truncate</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">size</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="positional-only-separator o"><abbr title="Positional-only parameter separator (PEP 570)"><span class="pre">/</span></abbr></span></em><span class="sig-paren">)</span><a class="headerlink" href="#fsspec_xrootd.XRootDFile.truncate" title="Link to this definition">#</a></dt>
 <dd><p>Truncate file to size bytes.</p>
-<p>File pointer is left unchanged. Size defaults to the current IO position
-as reported by tell(). Return the new size.</p>
+<p>File pointer is left unchanged.  Size defaults to the current IO
+position as reported by tell().  Return the new size.</p>
 </dd></dl>
 
 <dl class="py method">
@@ -834,7 +834,7 @@ raise unless recursive is true, where the default is ignore</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="fsspec_xrootd.XRootDFileSystem.expand_path">
-<span class="sig-name descname"><span class="pre">expand_path</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">path</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">recursive</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">maxdepth</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#fsspec_xrootd.XRootDFileSystem.expand_path" title="Link to this definition">#</a></dt>
+<span class="sig-name descname"><span class="pre">expand_path</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">path</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">recursive</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">maxdepth</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">assume_literal</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#fsspec_xrootd.XRootDFileSystem.expand_path" title="Link to this definition">#</a></dt>
 <dd><p>Turn one or more globs or directories into a list of all matching paths
 to files or directories.</p>
 <p>kwargs are passed to <code class="docutils literal notranslate"><span class="pre">glob</span></code> or <code class="docutils literal notranslate"><span class="pre">find</span></code>, which may in turn call <code class="docutils literal notranslate"><span class="pre">ls</span></code></p>
