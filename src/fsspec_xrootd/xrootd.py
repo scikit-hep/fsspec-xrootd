@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import grp
 import io
 import logging
 import os.path
+import pwd
 import stat as _stat
 import time
 import warnings
@@ -252,6 +254,71 @@ def _flags_to_mode(flags: StatInfoFlags) -> int:
     return ftype | perms
 
 
+def _flags_to_type(flags: StatInfoFlags) -> tuple[str, int]:
+    if flags & StatInfoFlags.IS_DIR:
+        return "directory", _stat.S_IFDIR
+    if flags & StatInfoFlags.OTHER:
+        return "other", _stat.S_IFLNK
+    return "file", _stat.S_IFREG
+
+
+def _statinfo_mode(statinfo: Any, file_type: int) -> int:
+    mode = getattr(statinfo, "mode", None)
+    if mode not in (None, ""):
+        try:
+            return file_type | (int(str(mode), 8) & 0o7777)
+        except ValueError:
+            pass
+    return _flags_to_mode(statinfo.flags)
+
+
+def _get_uid(owner: Any) -> int:
+    if owner in (None, ""):
+        return 0
+    try:
+        return pwd.getpwnam(str(owner)).pw_uid
+    except (KeyError, TypeError):
+        return 0
+
+
+def _get_gid(group: Any) -> int:
+    if group in (None, ""):
+        return 0
+    try:
+        return grp.getgrnam(str(group)).gr_gid
+    except (KeyError, TypeError):
+        return 0
+
+
+def _statinfo_to_info(path: str, statinfo: Any) -> dict[str, Any]:
+    ftype, file_type = _flags_to_type(statinfo.flags)
+    mtime = getattr(statinfo, "mtime", getattr(statinfo, "modtime", 0))
+    owner = getattr(statinfo, "owner", "")
+    group = getattr(statinfo, "group", "")
+
+    info = {
+        "name": path,
+        "size": statinfo.size,
+        "type": ftype,
+        "mtime": mtime,
+        "mode": _statinfo_mode(statinfo, file_type),
+        "uid": _get_uid(owner),
+        "gid": _get_gid(group),
+        "nlink": getattr(statinfo, "nlink", 1),
+        "atime": getattr(statinfo, "atime", mtime),
+        "ctime": getattr(statinfo, "ctime", mtime),
+        "owner": owner,
+        "group": group,
+    }
+    inode = getattr(statinfo, "id", None)
+    if inode is not None:
+        try:
+            info["ino"] = int(inode)
+        except ValueError:
+            info["ino"] = inode
+    return info
+
+
 class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
     protocol = "root"
     root_marker = "/"
@@ -498,24 +565,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
             status, deet = await _async_wrap(self._myclient.stat)(path, self.timeout)
             if not status.ok:
                 raise OSError(f"File stat request failed: {status.message}")
-            if deet.flags & StatInfoFlags.IS_DIR:
-                ftype = "directory"
-            elif deet.flags & StatInfoFlags.OTHER:
-                ftype = "other"
-            else:
-                ftype = "file"
-            return {
-                "name": path,
-                "size": deet.size,
-                "type": ftype,
-                "mtime": deet.modtime,
-                "mode": _flags_to_mode(deet.flags),
-                "uid": 0,
-                "gid": 0,
-                "nlink": 1,
-                "atime": deet.modtime,
-                "ctime": deet.modtime,
-            }
+            return _statinfo_to_info(path, deet)
 
     async def _ls(self, path: str, detail: bool = True, **kwargs: Any) -> list[Any]:
         listing = []
@@ -547,25 +597,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
                     f"Server failed to provide directory info: {status.message}"
                 )
             for item in deets:
-                flags = item.statinfo.flags
-                if flags & StatInfoFlags.IS_DIR:
-                    ftype = "directory"
-                elif flags & StatInfoFlags.OTHER:
-                    ftype = "other"
-                else:
-                    ftype = "file"
-                listing.append({
-                    "name": path + "/" + item.name,
-                    "size": item.statinfo.size,
-                    "type": ftype,
-                    "mtime": item.statinfo.modtime,
-                    "mode": _flags_to_mode(flags),
-                    "uid": 0,
-                    "gid": 0,
-                    "nlink": 1,
-                    "atime": item.statinfo.modtime,
-                    "ctime": item.statinfo.modtime,
-                })
+                listing.append(_statinfo_to_info(path + "/" + item.name, item.statinfo))
             self.dircache[path] = listing
             if detail:
                 return listing
