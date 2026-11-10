@@ -461,20 +461,52 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
 
     async def _rm(
         self,
-        path: str,
+        path: str | list[str],
         recursive: bool = False,
         batch_size: int | None = None,
         **kwargs: Any,
     ) -> Any:
-        # TODO: ensure the coros run in order, pyxrootd won't work otherwise
         # TODO: implement on_error
         batch_size = batch_size or self.batch_size
-        path = await self._expand_path(path, recursive=recursive)
-        return await _run_coros_in_chunks(
-            [self._rm_file(p, **kwargs) for p in reversed(path)],
-            batch_size=batch_size,
-            nofiles=True,
-        )
+        paths = await self._expand_path(path, recursive=recursive)
+        if not recursive:
+            return await _run_coros_in_chunks(
+                [self._rm_file(p, **kwargs) for p in reversed(paths)],
+                batch_size=batch_size,
+                nofiles=True,
+            )
+
+        paths_by_depth: dict[int, list[str]] = defaultdict(list)
+        for p in paths:
+            paths_by_depth[p.rstrip("/").count("/")].append(p)
+
+        # Ancestors must wait for all their descendants, but siblings can be
+        # removed concurrently.
+        results = []
+        for depth in sorted(paths_by_depth, reverse=True):
+            group = await _run_coros_in_chunks(
+                [self._rm_recursive_entry(p, **kwargs) for p in paths_by_depth[depth]],
+                batch_size=batch_size,
+                nofiles=True,
+                return_exceptions=True,
+            )
+            for result in group:
+                if isinstance(result, Exception):
+                    raise result
+            results.extend(group)
+        return results
+
+    async def _rm_recursive_entry(self, path: str, **kwargs: Any) -> None:
+        # Earlier successful removals may have invalidated a parent listing.
+        status, info = await _async_wrap(self._myclient.stat)(path, self.timeout)
+        if not status.ok:
+            raise OSError(f"File stat request failed: {status.message}")
+        if info.flags & StatInfoFlags.IS_DIR:
+            await self._rmdir(path)
+        else:
+            await self._rm_file(path, **kwargs)
+        self.dircache.pop(path, None)
+        self.dircache.pop(os.path.dirname(path), None)
 
     async def _rmdir(self, path: str) -> None:
         status, _ = await _async_wrap(self._myclient.rmdir)(path, self.timeout)
