@@ -12,16 +12,25 @@ on:
   schedule:
     - cron: "1 0 */7 * *"
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
 jobs:
   pre-commit:
     name: Format
     runs-on: ubuntu-latest
+    permissions:
+      contents: read # to check out the repository
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v6
-      - uses: pre-commit/action@v3.0.1
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
         with:
           extra_args: --all-files
 
@@ -29,6 +38,8 @@ jobs:
     name: Check Python ${{ matrix.python-version }} on ${{ matrix.runs-on }}
     runs-on: ${{ matrix.runs-on }}
     needs: [pre-commit]
+    permissions:
+      contents: read # to check out the repository
     strategy:
       fail-fast: false
       matrix:
@@ -39,11 +50,12 @@ jobs:
         shell: bash -l {0}
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Set up Conda
-        uses: conda-incubator/setup-miniconda@v4
+        uses: conda-incubator/setup-miniconda@8ee1f361103df19b6f8c8655fd3967a8ecb162d5 # v4.0.1
         with:
           python-version: ${{ matrix.python-version }}
           miniforge-version: latest
@@ -68,7 +80,9 @@ jobs:
           python -m pytest -vv -k "xrootd" uproot/tests --reruns 10 --reruns-delay 30 --only-rerun "(?i)OSError|FileNotFoundError|timeout|expired|connection|socket"
 
   pass:
+    name: Pass
     needs: [checks]
     runs-on: ubuntu-latest
+    permissions: {}
     steps:
       - run: echo "All jobs passed"
