@@ -19,38 +19,43 @@ env:
   # one distinguishes color depth, where "3" -> "256-bit color".
   FORCE_COLOR: 3
 
+permissions: {}
+
 jobs:
   dist:
     name: Distribution build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read # to check out the repository
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - uses: hynek/build-and-inspect-python-package@v2
+      - uses: hynek/build-and-inspect-python-package@67230f7b8410ae0052b39c1efc89d89fff43ff10 # v3.0.2
 
   publish:
     needs: [dist]
     name: Publish to PyPI
     environment: pypi
     permissions:
-      id-token: write
-      attestations: write
-      contents: read
+      id-token: write # for trusted publishing to PyPI and attestations
+      attestations: write # to store the build provenance attestation
+      contents: read # to read the release the workflow runs on
     runs-on: ubuntu-latest
     if: github.event_name == 'release' && github.event.action == 'published'
 
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: Packages
           path: dist
 
       - name: Generate artifact attestation for sdist and wheel
-        uses: actions/attest-build-provenance@v4.1.1
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: "dist/*"
 
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
