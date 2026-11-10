@@ -254,6 +254,41 @@ def test_mk_and_rm_dir_fsspec(localserver, cache_expiry, clear_server):
         fs.rmdir(path[0] + "/Folder3")
 
 
+def test_recursive_rm_with_files(localserver, clear_server, monkeypatch):
+    remoteurl, localpath = localserver
+    nested = os.path.join(localpath, "nested")
+    os.makedirs(os.path.join(nested, "branch", "deep"))
+    os.mkdir(os.path.join(nested, "empty"))
+    for relative in ("root.txt", "branch/child.txt", "branch/deep/leaf.txt"):
+        with open(os.path.join(nested, relative), "w") as f:
+            f.write(TESTDATA1)
+    with open(os.path.join(localpath, "unrelated.txt"), "w") as f:
+        f.write(TESTDATA2)
+
+    fs, _, path = fsspec.get_fs_token_paths(
+        remoteurl, storage_options={"listings_expiry_time": 60}
+    )
+    assert set(fs.ls(path[0], detail=False)) == {"nested", "unrelated.txt"}
+    rm_file = fs._rm_file
+
+    async def delayed_rm_file(path, **kwargs):
+        # Allow a directory request to overtake a descendant file request.
+        if path.endswith(".txt"):
+            await asyncio.sleep(0.1)
+        await rm_file(path, **kwargs)
+
+    monkeypatch.setattr(fs, "_rm_file", delayed_rm_file)
+    fs.rm(
+        [path[0] + "/nested/", path[0] + "/nested/branch/"],
+        recursive=True,
+        batch_size=2,
+    )
+
+    assert not os.path.exists(nested)
+    assert fs.ls(path[0], detail=False) == ["unrelated.txt"]
+    assert os.path.exists(os.path.join(localpath, "unrelated.txt"))
+
+
 def test_touch_modified(localserver, clear_server):
     remoteurl, localpath = localserver
     time.sleep(sleep_time)
